@@ -90,26 +90,34 @@ def openmeteo():
 def inept():
     head("Statistics Portugal (INE.pt): scan for tourism indicators")
     meta_url = "https://www.ine.pt/ine/json_indicador/pindicaMeta.jsp"
-    pattern = re.compile(r"revpar|adr|quarto|aposento|proveito|dormida|h[oó]spede|alojamento", re.I)
+    pattern = re.compile(r"revpar|adr|room|accommodation|overnight|guest|quarto|aposento|alojamento|dormida", re.I)
     ranges = [range(9800, 9830), range(10725, 10765), range(12080, 12115), range(13560, 13600)]
-    found = []
+    first = True
+    hits = []
     for rg in ranges:
         for n in rg:
             code = f"{n:07d}"
             try:
                 m = S.get(meta_url, params={"varcd": code, "lang": "EN"}, timeout=30).json()
             except Exception as exc:  # noqa: BLE001
-                print(code, "error", exc); continue
+                print(code, "error", exc, flush=True); continue
             m0 = m[0] if isinstance(m, list) and m else m
-            name = m0.get("IndicadorNome") or m0.get("IndNome") or json.dumps(m0)[:120]
-            if pattern.search(str(name)):
-                per = m0.get("Periodic") or m0.get("Periodicidade")
-                print(code, "|", per, "|", m0.get("UltimoPref"), "|", name)
-                found.append((code, m0))
-    for code, m0 in found:
-        if re.search(r"revpar|adr|quarto", json.dumps(m0), re.I):
-            print("\nFULL META", code, json.dumps(m0, ensure_ascii=False)[:2500])
-            break
+            if first:
+                print("META SHAPE", json.dumps(m0, ensure_ascii=False)[:1500], flush=True)
+                first = False
+            text = json.dumps(m0, ensure_ascii=False)
+            name = next((str(v) for k, v in m0.items() if "nome" in k.lower() or "name" in k.lower()), text[:150]) \
+                if isinstance(m0, dict) else text[:150]
+            flag = "*" if pattern.search(name) else " "
+            print(flag, code, name[:170], flush=True)
+            if re.search(r"revpar|average daily rate|\badr\b", name, re.I):
+                hits.append((code, m0))
+    for code, m0 in hits[:2]:
+        print("\nFULL META", code, json.dumps(m0, ensure_ascii=False)[:3000], flush=True)
+        dims = {}
+        data = S.get("https://www.ine.pt/ine/json_indicador/pindica.jsp",
+                     params={"op": "2", "varcd": code, "lang": "EN"}, timeout=60)
+        print("DATA (latest period)", data.status_code, data.text[:1500], flush=True)
 
 
 SECTIONS = {"eurostat": eurostat, "routes": routes, "oecd": oecd, "openmeteo": openmeteo, "inept": inept}
