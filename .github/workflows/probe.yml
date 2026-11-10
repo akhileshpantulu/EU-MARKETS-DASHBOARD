@@ -1,0 +1,21 @@
+# Manual: print the shape of each public API response (see scripts/probe_apis.py).
+name: Probe APIs
+
+on:
+  workflow_dispatch:
+    inputs:
+      sections:
+        description: "Space-separated: eurostat routes oecd openmeteo inept (empty = all)"
+        default: ""
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install pandas requests
+      - run: python scripts/probe_apis.py ${{ inputs.sections }}
