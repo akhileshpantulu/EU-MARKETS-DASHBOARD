@@ -329,6 +329,7 @@ function computeSeries(R, key, e) {
       return withChanges(m, D.country_annual.filter((r) => r.geo_code === e.code).map((r) => ({ year: r.year, value: r[key], ytd: !r.is_complete_year })));
     }
     if (key === "share_eu") {
+      if (e.code === "EU27_2020") return [];
       const eu = new Map(ah("EU27_2020", "nights").map((r) => [r.year, r]));
       return withChanges(m, ah(e.code, "nights").map((r) => { const t = eu.get(r.year); return { year: r.year, value: t && t.months === r.months ? r.value / t.value : null, ytd: r.ytd }; }));
     }
@@ -446,6 +447,9 @@ const ibGrowth = (m, g) => (!g ? "n/a" : g.total ? ibChg(m, g.v) : ibPct(g.v));
 const short = (label) => label.replace(/ \(.*\)$/, "");
 const lc = (s) => s.charAt(0).toLowerCase() + s.slice(1);
 const mult = (a, b) => (isNum(a) && isNum(b) && b ? `${(a / b).toFixed(2)}x` : "n/a");
+// Prose uses signs, tables use brackets: sg() "+6.8pp" / "−0.6pp"; mn() only rewrites negatives.
+const sg = (t) => (t === "n/a" ? t : /^\(.*\)$/.test(t) ? `−${t.slice(1, -1)}` : `+${t}`);
+const mn = (t) => (/^\(.*\)$/.test(t) ? `−${t.slice(1, -1)}` : t);
 // "the EU-27" but "Spain".
 const theB = (e) => (e?.code === "EU27_2020" ? `the ${e.name}` : e?.name);
 const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) ? 0 : n % 10] || "th"}`;
@@ -684,70 +688,67 @@ function monthlyChart(R, label) {
 }
 
 // ------------------------------------------------------------------ conclusions
-// Rule-based: who leads on scale, growth and recovery, and by how much.
+// Rule-based statements of size, growth and change against the comparison places or benchmark.
 function metricConclusions(R, keys) {
   if (!R.an.has("commentary")) return { headline: null, bullets: [] };
-  const P = parts(R);
   const k0 = keys.find((k) => hasData(R, k));
   if (!k0) return { headline: null, bullets: [] };
   const m0 = M[k0];
   const F = (k, list = R.ents) => list.map((e) => ({ e, ...facts(R, k, e) })).filter((d) => d.last);
+  const yr = (d) => (d.last.ytd ? `${d.last.year} YTD` : String(d.last.year));
   let headline = null;
   const bullets = [];
   if (R.cmp) {
     const d = F(k0);
     if (d.length >= 2) {
-      const better = BETTER[k0] || "high";
-      const byVal = [...d].sort((a, b) => (better === "high" ? b.last.value - a.last.value : a.last.value - b.last.value));
-      const byG = d.filter((x) => x.g).sort((a, b) => b.g.v - a.g.v);
+      const byVal = [...d].sort((a, b) => (BETTER[k0] === "low" ? a.last.value - b.last.value : b.last.value - a.last.value));
+      const byG = d.filter((x) => x.g && !x.g.total).sort((a, b) => b.g.v - a.g.v);
       if (m0.kind === "sum") {
         const lead = byVal[0], next = byVal[1];
-        headline = byG.length >= 2 && byG[0].e !== lead.e
-          ? `${lead.e.name} is the ${d.length > 2 ? "largest" : "larger"} market (${mult(lead.last.value, next.last.value)} ${next.e.name}); ${byG[0].e.name} is growing ${d.length > 2 ? "fastest" : "faster"} at ${ibPct(byG[0].g.v)} a year v ${lead.g ? `${ibPct(lead.g.v)} for ${lead.e.name}` : ibPct(byG[1].g.v)}`
-          : `${lead.e.name} leads on ${lc(short(m0.label))} on both scale (${ibVal(m0, lead.last.value)}) and growth${byG[0] ? ` (${ibPct(byG[0].g.v)} CAGR)` : ""}`;
-      } else if (BETTER[k0]) {
-        const a = byVal[0], z = byVal.at(-1);
-        headline = `${a.e.name} has the ${better === "high" ? "highest" : "lowest"} ${lc(short(m0.label))} at ${ibVal(m0, a.last.value)}, ${ibChg(m0, Math.abs(chgOf(m0, a.last.value, z.last.value)))} ${isRatio(m0) ? "above" : "ahead of"} ${z.e.name}`;
+        headline = `${lead.e.name} is the largest at ${ibVal(m0, lead.last.value)} ${lc(short(m0.label))} in ${yr(lead)}, ${mult(lead.last.value, next.last.value)} ${next.e.name}.`;
+        if (byG.length >= 2) headline += byG[0].e === lead.e ? ` It also grew fastest, ${mn(ibPct(byG[0].g.v))} a year since ${byG[0].g.from}.` : ` ${byG[0].e.name} grew fastest, ${mn(ibPct(byG[0].g.v))} a year since ${byG[0].g.from}.`;
       } else {
-        const hi = [...d].sort((a, b) => b.last.value - a.last.value);
-        headline = `${short(m0.label)}: ${hi.map((x) => `${x.e.name} ${ibVal(m0, x.last.value)}`).join(", ")}`;
+        headline = `${short(m0.label)}, ${yr(byVal[0])}: ${byVal.map((x) => `${x.e.name} ${mn(ibVal(m0, x.last.value))}`).join(", ")}.`;
       }
     }
-    for (const k of keys.filter((k) => hasData(R, k)).slice(0, 4)) {
+    for (const k of keys.filter((k) => hasData(R, k)).slice(1, 5)) {
       const m = M[k];
       const dd = F(k);
       if (!dd.length) continue;
-      bullets.push(`${short(m.label)}: ${dd.map((x) => `${x.e.name} ${ibVal(m, x.last.value)}${R.an.has("cagr") && x.g ? ` (${ibGrowth(m, x.g)}${x.g.total ? "" : " CAGR"})` : ""}`).join(" v ")}.`);
+      bullets.push(`${short(m.label)}: ${dd.map((x) => `${x.e.name} ${mn(ibVal(m, x.last.value))}${R.an.has("cagr") && x.g ? `, ${x.g.total ? `${sg(ibChg(m, x.g.v))} since ${x.g.from}` : `CAGR ${mn(ibPct(x.g.v))}`}` : ""}`).join("; ")}.`);
+    }
+    if (R.an.has("cagr") && m0.kind !== "sum") {
+      const g = F(k0).filter((x) => x.g);
+      if (g.length >= 2) bullets.unshift(`Change since ${g[0].g.from}: ${g.map((x) => `${x.e.name} ${sg(ibGrowth(m0, x.g))}`).join(", ")}.`);
     }
     if (R.an.has("base")) {
       const vb = F(k0).filter((x) => isNum(x.vb));
-      if (vb.length >= 2) bullets.push(`Versus ${R.base}: ${vb.map((x) => `${x.e.name} ${ibChg(m0, x.vb)}`).join(", ")}; ${vb.sort((a, b) => b.vb - a.vb)[0].e.name} has recovered furthest.`);
+      if (vb.length >= 2) bullets.push(`${short(m0.label)} against ${R.base}: ${vb.map((x) => `${x.e.name} ${sg(ibChg(m0, x.vb))}`).join(", ")}.`);
     }
   } else {
     const [me] = F(k0, [R.ents[0]]);
     const [bm] = R.bench ? F(k0, [R.bench]) : [];
     if (me) {
-      if (bm && m0.kind === "sum" && me.g && bm.g) {
-        headline = `${me.e.name} ${me.g.v >= bm.g.v ? "outgrew" : "lagged"} ${theB(bm.e)}: ${lc(short(m0.label))} ${ibPct(me.g.v)} a year v ${ibPct(bm.g.v)} (${me.g.from}-${me.g.to})`;
-      } else if (bm && isNum(me.last.value) && isNum(bm.last.value) && m0.kind !== "sum") {
-        const dlt = chgOf(m0, me.last.value, bm.last.value);
-        headline = `${short(m0.label)} of ${ibVal(m0, me.last.value)} is ${ibChg(m0, Math.abs(dlt))} ${dlt >= 0 ? "above" : "below"} ${theB(bm.e)} (${ibVal(m0, bm.last.value)})`;
+      if (m0.kind === "sum") {
+        headline = `${me.e.name} recorded ${mn(ibVal(m0, me.last.value))} ${lc(short(m0.label))} in ${yr(me)}${isNum(me.last.change) ? `, ${sg(ibChg(m0, me.last.change))} on the prior year` : ""}.`;
+        if (me.g) headline += ` Growth since ${me.g.from} was ${mn(ibPct(me.g.v))} a year${bm?.g ? `, against ${mn(ibPct(bm.g.v))} for ${theB(bm.e)}` : ""}.`;
       } else {
-        headline = `${me.e.name}: ${lc(short(m0.label))} ${ibVal(m0, me.last.value)}${yearTag(R, me.last)}${me.g ? `, ${ibGrowth(m0, me.g)}${me.g.total ? " over the period" : " a year"}` : ""}`;
+        headline = `${short(m0.label)} was ${mn(ibVal(m0, me.last.value))} in ${yr(me)}`;
+        if (bm && isNum(bm.last.value)) { const dlt = chgOf(m0, me.last.value, bm.last.value); headline += `, ${ibChg(m0, Math.abs(dlt))} ${dlt >= 0 ? "above" : "below"} ${theB(bm.e)} (${mn(ibVal(m0, bm.last.value))})`; }
+        headline += ".";
       }
     }
-    for (const k of keys.filter((k) => hasData(R, k)).slice(0, 4)) {
+    for (const k of keys.filter((k) => hasData(R, k)).slice(1, 5)) {
       const m = M[k];
       const [a] = F(k, [R.ents[0]]);
       if (!a) continue;
       const [b] = R.bench ? F(k, [R.bench]) : [];
-      let t = `${short(m.label)}: ${ibVal(m, a.last.value)}${yearTag(R, a.last)}`;
-      if (R.an.has("yoy") && isNum(a.last.change)) t += `, ${ibChg(m, a.last.change)} YoY`;
-      if (R.an.has("cagr") && a.g) t += `, ${ibGrowth(m, a.g)}${a.g.total ? " since " + a.g.from : " CAGR"}`;
-      if (b) t += `; ${b.e.name} ${ibVal(m, b.last.value)}${R.an.has("cagr") && b.g ? ` (${ibGrowth(m, b.g)}${b.g.total ? "" : " CAGR"})` : ""}`;
+      let t = `${short(m.label)}: ${mn(ibVal(m, a.last.value))}${yearTag(R, a.last)}`;
+      if (R.an.has("cagr") && a.g) t += `, ${a.g.total ? `${sg(ibChg(m, a.g.v))} since ${a.g.from}` : `CAGR ${mn(ibPct(a.g.v))}`}`;
+      if (b) t += `. ${b.e.name}: ${mn(ibVal(m, b.last.value))}${R.an.has("cagr") && b.g ? `, ${b.g.total ? `${sg(ibChg(m, b.g.v))} since ${b.g.from}` : `CAGR ${mn(ibPct(b.g.v))}`}` : ""}`;
       bullets.push(`${t}.`);
     }
-    if (R.an.has("base") && me && isNum(me.vb)) bullets.push(`${me.lf.year} stands ${ibChg(m0, me.vb)} against ${R.base}.`);
+    if (R.an.has("base") && me && isNum(me.vb)) bullets.push(`${short(m0.label)} in ${me.lf.year} against ${R.base}: ${sg(ibChg(m0, me.vb))}.`);
   }
   return { headline, bullets };
 }
@@ -786,16 +787,14 @@ function seasonalitySection(R, label) {
   let headline = null; const bullets = [];
   if (R.an.has("commentary")) {
     const own = rows.filter((r) => !r.d.e.bench);
-    if (R.cmp && own.length >= 2) {
-      const s = [...own].sort((a, b) => a.st.two - b.st.two);
-      headline = `${s[0].d.e.name} is the least seasonal: its two busiest months take ${ibPct(s[0].st.two)} of the year v ${ibPct(s.at(-1).st.two)} for ${s.at(-1).d.e.name}`;
-    } else if (own[0]) {
-      const b = rows.find((r) => r.d.e.bench);
-      headline = `${own[0].d.e.name} peaks in ${monthName(own[0].st.peak + 1)}; the two busiest months take ${ibPct(own[0].st.two)} of the year${b ? ` v ${ibPct(b.st.two)} for ${theB(b.d.e)}` : ""}`;
-    }
+    const b = rows.find((r) => r.d.e.bench);
+    const list = [...own, ...(b ? [b] : [])];
+    headline = `Share of ${label.toLowerCase()} in the two busiest months: ${list.map((r) => `${r.d.e.name} ${ibPct(r.st.two)}`).join(", ")} (${list[0].yl}).`;
     for (const r of rows) {
-      if (r.yf !== r.yl) bullets.push(`${r.d.e.name}: peak concentration ${r.st.two < r.st0.two ? "fell" : "rose"} from ${ibPct(r.st0.two)} in ${r.yf} to ${ibPct(r.st.two)} in ${r.yl}; November to March holds ${ibPct(r.st.off)}.`);
-      else bullets.push(`${r.d.e.name}: November to March holds ${ibPct(r.st.off)} of the year (${r.yl}).`);
+      const parts2 = [`peak month ${monthName(r.st.peak + 1)} (${ibPct(r.st.peakShare)})`];
+      if (r.yf !== r.yl) parts2.push(`two busiest months ${ibPct(r.st0.two)} in ${r.yf}, ${ibPct(r.st.two)} in ${r.yl}`);
+      parts2.push(`November to March ${ibPct(r.st.off)}`);
+      bullets.push(`${r.d.e.name}: ${parts2.join("; ")}.`);
     }
   }
   const yrs = R.years.filter((y) => rows.some((r) => r.d.out.has(y)));
@@ -835,23 +834,14 @@ function mixSection(R, { rowsFor, nameOf, label, unit = "nights" }) {
   let headline = null; const bullets = [];
   if (R.an.has("commentary")) {
     const own = P.filter((d) => !d.e.bench);
-    const conc = [...own].sort((a, b) => top3(b.cur) - top3(a.cur));
-    const leads = own.map((d) => `${d.e.name}: ${nameOf(d.cur[0].code)} ${ibPct(d.cur[0].share)}`);
-    if (own.length >= 2) {
-      const sameTop = own.every((d) => d.cur[0].code === own[0].cur[0].code);
-      headline = sameTop ? `${nameOf(own[0].cur[0].code)} is the largest ${label.toLowerCase()} for every place; ${conc[0].e.name} is the most concentrated (top three ${ibPct(top3(conc[0].cur))})`
-        : `Different anchor ${label.toLowerCase()}s (${leads.join("; ")}); ${conc[0].e.name} is the most concentrated (top three ${ibPct(top3(conc[0].cur))})`;
-    } else if (own[0]) {
-      const b = P.find((d) => d.e.bench);
-      headline = `${nameOf(own[0].cur[0].code)} accounts for ${ibPct(own[0].cur[0].share)} of ${own[0].e.name}'s ${unit}; the top three ${label.toLowerCase()}s ${ibPct(top3(own[0].cur))}${b ? ` v ${ibPct(top3(b.cur))} for ${theB(b.e)}` : ""}`;
-    }
+    headline = `Largest ${label.toLowerCase()}: ${own.map((d) => `${d.e.name}, ${nameOf(d.cur[0].code)} (${ibPct(d.cur[0].share)})`).join("; ")}. Top three: ${P.map((d) => `${d.e.name} ${ibPct(top3(d.cur))}`).join(", ")}.`;
     for (const d of own) {
       if (!d.first) continue;
       const moves = d.cur.slice(0, 10).map((r) => ({ r, s0: share0(d, r.code) })).filter((x) => isNum(x.s0)).map((x) => ({ ...x, dlt: x.r.share - x.s0 })).sort((a, b) => b.dlt - a.dlt);
-      if (moves.length) bullets.push(`${d.e.name}: biggest gain in share since ${d.y0} ${nameOf(moves[0].r.code)} (${ibPp(moves[0].dlt * 100)}); biggest loss ${nameOf(moves.at(-1).r.code)} (${ibPp(moves.at(-1).dlt * 100)}).`);
+      if (moves.length) bullets.push(`${d.e.name}, change in share since ${d.y0}: ${nameOf(moves[0].r.code)} ${sg(ibPp(moves[0].dlt * 100))}, ${nameOf(moves.at(-1).r.code)} ${sg(ibPp(moves.at(-1).dlt * 100))}.`);
     }
     const ukDep = own.filter((d) => (share(d, "UK") || 0) > 0.2);
-    if (ukDep.length) bullets.push(`UK exposure above 20% of ${unit} in ${listJoin(ukDep.map((d) => d.e.name))}: sensitive to sterling and UK consumer demand.`);
+    if (ukDep.length) bullets.push(`United Kingdom above 20% of ${unit}: ${ukDep.map((d) => `${d.e.name} (${ibPct(share(d, "UK"))})`).join(", ")}.`);
   }
   const charts = [
     { title: `Share of ${unit} by ${label.toLowerCase()}`, legend: legendOf(R, P.map((d) => d.e)),
@@ -932,12 +922,11 @@ function regionsSection(R) {
   }
   let headline = null; const bullets = [];
   if (R.an.has("commentary")) {
-    const c = [...per].sort((a, b) => top3(b) - top3(a));
-    headline = R.cmp ? `${c[0].e.name} is the more regionally concentrated market: its top three regions hold ${ibPct(top3(c[0]))} of nights v ${ibPct(top3(c.at(-1)))} for ${c.at(-1).e.name}`
-      : `${per[0].items[0].name} is ${per[0].e.name}'s largest region with ${ibPct(per[0].items[0].share)} of nights; the top three hold ${ibPct(top3(per[0]))}`;
+    headline = R.cmp ? `Top three regions' share of nights: ${per.map((d) => `${d.e.name} ${ibPct(top3(d))}`).join(", ")} (${per[0].y}).`
+      : `${per[0].items[0].name} is the largest region with ${ibPct(per[0].items[0].share)} of nights in ${per[0].y}; the top three hold ${ibPct(top3(per[0]))}.`;
     for (const d of per) {
       const out = d.items.slice(0, 10).filter((x) => isNum(x.g) && isNum(d.natG) && x.g > d.natG).map((x) => x.name);
-      if (out.length) bullets.push(`${d.e.name}: ${out.length} of the top ten regions grew faster than the national ${ibPct(d.natG)} a year, led by ${out.slice(0, 3).join(", ")}.`);
+      if (out.length) bullets.push(`${d.e.name}: ${out.length} of the top ten regions grew faster than the national ${mn(ibPct(d.natG))} a year (${listJoin(out.slice(0, 3))}${out.length > 3 ? " and others" : ""}).`);
     }
   }
   const xl = per.map((d) => ({ title: `Regions, ${d.e.name}, ${d.y}`, columns: [{ label: "Region", fmt: "text" }, { label: "Nights", fmt: "#,##0" }, { label: "Share of national nights", fmt: "0.0%" },
@@ -963,11 +952,11 @@ function routesSection(R) {
     draw: (el) => ibHBars(el, { cats: all.map((x) => (R.cmp ? `${x.name} (${x.e.name.split(" ")[0]})` : x.name)), fmt: (v) => ibVal(M.passengers, v), series: per.map((d) => ({ name: d.e.name, color: colorOf(p, d.e), values: all.map((x) => (x.e === d.e ? x.v : null)) })) }) }];
   let headline = null; const bullets = [];
   if (R.an.has("commentary")) {
-    headline = per.map((d) => `${d.e.name}'s busiest route is ${d.top[0].partner_airport_name} (${ibVal(M.passengers, d.top[0].passengers)})`).join("; ");
+    headline = `Busiest route: ${per.map((d) => `${d.e.name} to ${d.top[0].partner_airport_name}, ${ibVal(M.passengers, d.top[0].passengers)} passengers (${d.y})`).join("; ")}.`;
     for (const d of per) {
       const t = d.top.reduce((a, r) => a + r.passengers, 0);
       const fast = d.top.filter((r) => isNum(r.passengers_yoy)).sort((a, b) => b.passengers_yoy - a.passengers_yoy)[0];
-      bullets.push(`${d.e.name}: top ten routes carry ${ibVal(M.passengers, t)} passengers; fastest growing ${fast ? `${fast.partner_airport_name} (${ibPct(fast.passengers_yoy)})` : "n/a"}.`);
+      bullets.push(`${d.e.name}: top ten routes ${ibVal(M.passengers, t)} passengers${fast ? `; largest increase ${fast.partner_airport_name} (${sg(ibPct(fast.passengers_yoy))})` : ""}.`);
     }
   }
   const xl = per.map((d) => ({ title: `Top routes, ${d.e.name}, ${d.y}`, columns: [{ label: "Route", fmt: "text" }, { label: "Country", fmt: "text" }, { label: "Passengers", fmt: "#,##0" }, { label: "Change on previous year", fmt: "0.0%" }],
@@ -1009,13 +998,13 @@ const SECTION_DEFS = {
 // ------------------------------------------------------------------ executive summary
 // Scorecard: each criterion ranks the places (comparison) or sets the place against its benchmark.
 const SCORE = {
-  country: [["Scale", "nights", "value"], ["Growth (CAGR)", "nights", "cagr"], ["Recovery v 2019", "nights", "base"], ["Momentum (latest YoY)", "nights", "yoy"],
-    ["Occupancy", "bed_place_occupancy_rate", "value"], ["Year-round demand", "season", "two"], ["International mix", "foreign_share", "value"],
-    ["Air traffic growth", "air_passengers", "cagr"], ["Pricing momentum", "hicp_accommodation_pct", "value"]],
-  region: [["Scale", "nights", "value"], ["Growth (CAGR)", "nights", "cagr"], ["Recovery v 2019", "nights", "base"], ["Momentum (latest YoY)", "nights", "yoy"],
-    ["Year-round demand", "season", "two"], ["International mix", "foreign_share", "value"], ["Share of national nights", "share_of_country_nights", "value"]],
-  airport: [["Scale", "passengers", "value"], ["Growth (CAGR)", "passengers", "cagr"], ["Recovery v 2019", "passengers", "base"], ["Momentum (latest YoY)", "passengers", "yoy"],
-    ["Year-round demand", "season", "two"], ["Share of national passengers", "share_country_air", "value"]],
+  country: [["Size (nights)", "nights", "value"], ["Growth (CAGR)", "nights", "cagr"], ["Change v 2019", "nights", "base"], ["Latest year change", "nights", "yoy"],
+    ["Bed-place occupancy", "bed_place_occupancy_rate", "value"], ["Two busiest months' share", "season", "two"], ["Foreign share of nights", "foreign_share", "value"],
+    ["Air passenger growth (CAGR)", "air_passengers", "cagr"], ["Accommodation inflation", "hicp_accommodation_pct", "value"]],
+  region: [["Size (nights)", "nights", "value"], ["Growth (CAGR)", "nights", "cagr"], ["Change v 2019", "nights", "base"], ["Latest year change", "nights", "yoy"],
+    ["Two busiest months' share", "season", "two"], ["Foreign share of nights", "foreign_share", "value"], ["Share of national nights", "share_of_country_nights", "value"]],
+  airport: [["Size (passengers)", "passengers", "value"], ["Growth (CAGR)", "passengers", "cagr"], ["Change v 2019", "passengers", "base"], ["Latest year change", "passengers", "yoy"],
+    ["Two busiest months' share", "season", "two"], ["Share of national passengers", "share_country_air", "value"]],
 };
 function scoreValue(R, e, key, what) {
   if (key === "season") {
@@ -1033,7 +1022,7 @@ function scoreValue(R, e, key, what) {
 }
 function summarySlide(R, sections) {
   const P = parts(R);
-  const crit = SCORE[R.st.level].map(([label, key, what]) => ({ label, key, what, vals: P.map((e) => scoreValue(R, e, key, what)) }))
+  const crit = SCORE[R.st.level].filter(([label]) => R.cmp || !label.startsWith("Size")).map(([label, key, what]) => ({ label, key, what, vals: P.map((e) => scoreValue(R, e, key, what)) }))
     .filter((c) => c.vals.filter(Boolean).length >= (R.cmp ? 2 : 1));
   const own = R.ents;
   const ranks = own.map(() => []);
@@ -1061,19 +1050,17 @@ function summarySlide(R, sections) {
     if (R.cmp) {
       const order = own.map((e, i) => ({ e, i, a: avg[i] })).filter((x) => isNum(x.a)).sort((a, b) => a.a - b.a);
       if (order.length) {
-        const best = order[0];
-        const wins = (i) => crit.filter((c) => c.rank.get(i) === 1).map((c) => lc(c.label.replace(/ \(.*\)$/, "")));
-        const others = order.slice(1).map((x) => (wins(x.i).length ? `${x.e.name} leads on ${listJoin(wins(x.i))}` : null)).filter(Boolean);
-        items.push({ lead: `${best.e.name} screens strongest overall (average rank ${best.a.toFixed(1)} across ${crit.length} criteria)`,
-          text: `It leads on ${listJoin(wins(best.i)) || "no single criterion but ranks consistently"}${others.length ? `; ${others.join("; ")}` : ""}.` });
+        const firsts = (i) => crit.filter((c) => c.rank.get(i) === 1).map((c) => lc(c.label));
+        items.push({ lead: `${order[0].e.name} has the best average rank across ${crit.length} measures (${order[0].a.toFixed(1)}).`,
+          text: `Ranked first: ${order.map((x) => `${x.e.name} – ${firsts(x.i).length ? listJoin(firsts(x.i)) : "none"}`).join("; ")}.` });
       }
     } else if (R.bench) {
-      const ahead = crit.filter((c) => c.vsBench === "above").map((c) => lc(c.label.replace(/ \(.*\)$/, "")));
-      const behind = crit.filter((c) => c.vsBench === "below").map((c) => lc(c.label.replace(/ \(.*\)$/, "")));
-      items.push({ lead: `${R.ents[0].name} is ahead of ${theB(R.bench)} on ${ahead.length} of ${ahead.length + behind.length} criteria`,
-        text: `Ahead on ${listJoin(ahead) || "none"}; behind on ${listJoin(behind) || "none"}.` });
+      const ahead = crit.filter((c) => c.vsBench === "above").map((c) => lc(c.label));
+      const behind = crit.filter((c) => c.vsBench === "below").map((c) => lc(c.label));
+      items.push({ lead: `${R.ents[0].name} is ahead of ${theB(R.bench)} on ${ahead.length} of ${ahead.length + behind.length} measures.`,
+        text: `Ahead: ${listJoin(ahead) || "none"}. Behind: ${listJoin(behind) || "none"}.` });
     }
-    for (const s of sections) if (s.headline) items.push({ lead: `${s.title.replace(/:.*$/, "")}: ${s.headline}`, text: s.bullets?.[0] || "" });
+    for (const s of sections) if (s.headline) items.push({ lead: `${s.title.replace(/:.*$/, "")}:`, text: s.headline });
   }
   const xl = [{ title: "Scorecard", columns: [{ label: "Criterion", fmt: "text" }, ...P.map((e) => ({ label: e.name, fmt: "General" }))],
     rows: crit.map((c) => [c.label, ...P.map((e, i) => c.vals[i]?.v ?? null)]),
@@ -1086,8 +1073,8 @@ function summarySlide(R, sections) {
 }
 
 // ------------------------------------------------------------------ document (4:3 slide deck)
-// Follows the house market-overview deck: #DCDAC8 title band, #F6F3EB page, bold upper-case
-// Arial Nova titles, Century Gothic text, navy-headed tables, red / navy / grey series, and the
+// Follows the house market-overview deck: #DCDAC8 title band, ivory page, bold upper-case
+// titles, Arial text, navy-headed tables, Highgate accent series (bronze, teal, ochre, khaki), and the
 // emblem, "Strictly Private & Confidential" and page number along the foot. 10 x 7.5 in slides.
 const BRAND = { logo: "assets/brand/logo.png", emblem: "assets/brand/emblem.png" };
 const SECTION_SOURCES = {
@@ -1179,21 +1166,21 @@ function renderDocument(ctx, host, doc, paper, scroll) {
   for (const s of doc.sections) {
     const sl = add(slideShell(s.title.replace(/:.*$/, "")), s.key);
     sl.src.textContent = `Sources: ${SECTION_SOURCES[s.key] || "Eurostat"}${s.table?.notes?.length ? `. Notes: ${s.table.notes.join("; ")}.` : ""}`;
-    if (s.headline) sl.body.append(h("div", { class: "sl-headline" }, s.headline.endsWith(".") ? s.headline : `${s.headline}.`));
     if (s.scorecard) {
       sl.body.classList.add("exec");
-      const list = h("ol", { class: "sl-concl" }, (s.items || []).slice(s.headline ? 1 : 0).map((it) => h("li", {}, h("b", {}, it.lead.endsWith(".") ? it.lead : `${it.lead}.`), it.text ? ` ${it.text}` : "")));
-      const first = s.items?.[0];
+      const list = h("ol", { class: "sl-concl" }, (s.items || []).map((it) => h("li", {}, h("b", {}, it.lead), it.text ? ` ${it.text}` : "")));
       sl.body.append(h("div", { class: "sl-row" },
-        h("div", { class: "sl-text" }, first?.text ? h("p", { class: "sl-lede" }, first.text) : null, list),
-        h("div", { class: "sl-tablewrap" }, h("div", { class: "sl-table-title" }, R.cmp ? "Relative scorecard (shading = rank)" : `Scorecard v ${R.bench?.name || "benchmark"}`), renderSimpleTable(s.table))));
+        h("div", { class: "sl-text" }, list),
+        h("div", { class: "sl-tablewrap" }, h("div", { class: "sl-table-title" }, R.cmp ? "Scorecard (bold = ranked first)" : `Scorecard v ${R.bench?.name || "benchmark"}`), renderSimpleTable(s.table))));
       continue;
     }
     const tableEl = s.table?.groups ? renderCompTable(s.table) : s.table ? renderSimpleTable(s.table) : null;
+    // The conclusion is the first bullet, in bold (one heading per slide: the title band).
+    const lines = [...(s.headline ? [s.headline] : []), ...(s.bullets || [])];
     const top = h("div", { class: "sl-row top" },
-      s.bullets?.length ? h("div", { class: "sl-text" }, h("ul", { class: "sl-bullets" }, s.bullets.map((b) => h("li", {}, b)))) : null,
+      lines.length ? h("div", { class: "sl-text" }, h("ul", { class: "sl-bullets" }, lines.map((b, i) => h("li", { class: i === 0 && s.headline ? "lead" : null }, b)))) : null,
       tableEl ? h("div", { class: "sl-tablewrap" }, tableEl) : null);
-    if (!s.bullets?.length) top.classList.add("solo");
+    if (!lines.length) top.classList.add("solo");
     sl.body.append(top);
     if (s.charts?.length) sl.body.append(h("div", { class: `sl-figs n${s.charts.length}${s.chartsWide ? " wide" : ""}` }, s.charts.map(figure)));
     for (const t of s.appendix || []) appendix.push({ section: s, t });

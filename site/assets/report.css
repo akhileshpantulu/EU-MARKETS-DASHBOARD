@@ -1,6 +1,6 @@
 /* Report builder and the report deck. The deck follows the house market-overview template:
-   4:3 slides (10 x 7.5 in), #DCDAC8 title band, #F6F3EB page, Arial Nova titles, Century
-   Gothic text, navy #16365C table headers, red #AE0026 / navy / grey chart series. */
+   4:3 slides (10 x 7.5 in), #DCDAC8 title band, ivory #F3F1EC page, Arial throughout, navy
+   #16365C table headers, Highgate accent series (bronze, teal, ochre, khaki; mauve benchmark). */
 
 .rp-builder {
   background: var(--surface); border: 1px solid var(--border); border-radius: 2px; margin-bottom: 14px;
@@ -31,17 +31,18 @@
 /* ------------------------------------------------------------------ deck */
 .rp-deck {
   color-scheme: light;
-  --band: #dcdac8; --page: #f6f3eb; --surface: #f6f3eb; --surface-2: #ebe8de;
+  --band: #dcdac8; --page: #f3f1ec; --surface: #f3f1ec; --surface-2: #e9e6de;
   --text: #030303; --text-2: #404040; --muted: #595959;
   --grid: #d9d9d9; --axis: #a6a6a6; --border: rgba(3, 3, 3, 0.15);
-  --navy: #16365c; --red: #ae0026; --redline: #c00000;
-  --series-1: #ae0026; --series-2: #16365c; --series-3: #c49e5a; --series-4: #404040;
-  --series-5: #9f7044; --series-6: #19323c; --series-7: #a8a375; --series-8: #c09ea3;
+  --navy: #16365c; --bronze: #9f7044; --redline: #c00000;
+  /* Highgate accents: bronze, teal, ochre, khaki, espresso, sage, rose; mauve for benchmarks. */
+  --series-1: #9f7044; --series-2: #19323c; --series-3: #c49e5a; --series-4: #6b6647;
+  --series-5: #41342e; --series-6: #a8a375; --series-7: #c09ea3; --series-8: #a3939a;
   --seq-100: #dde3ea; --seq-250: #a7b6c8; --seq-400: #5d7896; --seq-550: #2c4b70; --seq-700: #16365c;
-  --div-neg: #ae0026; --div-neg-2: #d98a99; --div-mid: #ebe8de; --div-pos-2: #8ea2ba; --div-pos: #16365c;
-  --context: #a6a6a6; --signal: #ae0026;
-  --title-font: "Arial Nova", Arial, "Helvetica Neue", sans-serif;
-  --font: "Century Gothic", CenturyGothic, "Didact Gothic", "Questrial", AppleGothic, sans-serif;
+  --div-neg: #9f7044; --div-neg-2: #c9a98a; --div-mid: #e9e6de; --div-pos-2: #7d8f96; --div-pos: #19323c;
+  --context: #a3939a; --signal: #9f7044;
+  --title-font: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --font: Arial, "Helvetica Neue", Helvetica, sans-serif;
   display: flex; flex-direction: column; align-items: center; gap: 18px; width: max-content; margin: 0 auto;
   font-family: var(--font); color: var(--text);
 }
@@ -56,11 +57,6 @@
   text-transform: uppercase; color: var(--text);
 }
 .sl-body { flex: 1; min-height: 0; padding: 12px 26px 4px; display: flex; flex-direction: column; gap: 10px; font-size: 11px; line-height: 1.35; }
-/* Action headline: the slide's conclusion, as in an investment-banking deck. */
-.sl-headline {
-  flex: none; font-family: var(--title-font); font-weight: 700; font-size: 14px; line-height: 1.25; color: var(--navy);
-  padding: 0 0 7px; border-bottom: 1.5px solid var(--navy);
-}
 .sl-row { display: flex; gap: 18px; min-height: 0; }
 .sl-row.top { flex: 0 1 auto; max-height: 44%; }
 .sl-row.top > .sl-text { flex: 0 0 36%; }
@@ -70,13 +66,14 @@
 .sl-body.exec .sl-row > .sl-text { flex: 0 0 47%; }
 .sl-body.exec .sl-row > .sl-tablewrap { flex: 1; }
 .sl-text { overflow: hidden; min-height: 0; }
-.sl-bullets { margin: 0; padding-left: 14px; }
-.sl-bullets li { margin: 0 0 5px; }
-.sl-bullets li::marker { color: var(--navy); }
+.sl-bullets { margin: 0; padding: 0; list-style: none; }
+.sl-bullets li { margin: 0 0 5px; padding-left: 12px; position: relative; }
+.sl-bullets li::before { content: "–"; position: absolute; left: 0; }
+.sl-bullets li.lead { font-weight: 700; }
 .sl-lede { margin: 0 0 8px; }
 .sl-concl { margin: 0; padding-left: 18px; }
 .sl-concl li { margin: 0 0 7px; }
-.sl-concl li::marker { font-weight: 700; color: var(--navy); }
+.sl-concl li::marker { font-weight: 700; color: var(--text); }
 .sl-concl b { color: var(--text); }
 .sl-figs { flex: 1; display: grid; gap: 8px 16px; min-height: 0; min-width: 0; grid-template-rows: minmax(0, 1fr); }
 .sl-figs.n1 { grid-template-columns: 1fr; }
@@ -116,17 +113,16 @@
 .sl-table .bench { color: var(--muted); font-style: italic; }
 .sl-table th.bench { color: #d9d9d9; }
 .sl-table thead tr.sub th.bench { color: var(--muted); }
-.sl-table tfoot td { font-weight: 700; border-top: 1.5px solid var(--text); border-bottom: 0; background: #ebe8de; }
+.sl-table tfoot td { font-weight: 700; border-top: 1px solid var(--text); border-bottom: 0; background: #e9e6de; }
 .sl-table tr.benchrow td { color: var(--muted); font-style: italic; }
 .sl-table tr.hl td { border-top: 1.5px dashed var(--redline); border-bottom: 1.5px dashed var(--redline); }
 .sl-table tr.hl td:first-child { border-left: 1.5px dashed var(--redline); }
 .sl-table tr.hl td:last-child { border-right: 1.5px dashed var(--redline); }
 .sl-table.score td { padding: 4px 6px; }
-.sl-table.score td.best { background: var(--navy); color: #fff; font-weight: 700; }
-.sl-table.score td.mid { background: #c9d3df; }
-.sl-table.score td.worst { background: #f1efe8; }
-.sl-table td.pos-above { color: var(--navy); font-weight: 700; }
-.sl-table td.pos-below { color: var(--red); font-weight: 700; }
+.sl-table.score td.best { color: var(--bronze); font-weight: 700; }
+.sl-table.score td.worst { color: var(--muted); }
+.sl-table td.pos-above { color: var(--text); font-weight: 700; }
+.sl-table td.pos-below { color: var(--muted); }
 
 /* Cover and contents */
 .sl-cover { background: var(--band); }
