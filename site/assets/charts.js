@@ -314,3 +314,34 @@ export function scaleGradient(kind) {
   const stops = kind === "div" ? p.div : p.seq;
   return `linear-gradient(90deg, ${stops.join(", ")})`;
 }
+
+/**
+ * Vertical columns on a category axis with a zero baseline, one colour per column
+ * (colorFn) so the sign or a highlighted year can carry polarity.
+ * items: [{label, value, muted?}]
+ */
+export function columnChart(el, { items, format = (v) => v, colorFn, emptyMessage }) {
+  if (!items.some((d) => isNum(d.value))) return empty(el, emptyMessage);
+  const p = palette();
+  const chart = init(el);
+  const ax = axisStyle(p);
+  chart.setOption({
+    ...baseOption(p),
+    grid: { left: 8, right: 16, top: 24, bottom: 8, containLabel: true },
+    tooltip: { ...baseOption(p).tooltip, trigger: "axis", axisPointer: { type: "shadow", shadowStyle: { color: "rgba(127,127,127,0.08)" } },
+      formatter: (xs) => { const x = xs[0]; return `${escapeHTML(x.name)}<br><b>${isNum(x.value) ? format(x.value) : "n/a"}</b>`; } },
+    xAxis: { type: "category", data: items.map((d) => d.label), ...ax, splitLine: { show: false },
+      axisLabel: { ...ax.axisLabel, interval: "auto", hideOverlap: true } },
+    yAxis: { type: "value", ...ax, axisLine: { show: false }, axisLabel: { ...ax.axisLabel, formatter: (v) => format(v) } },
+    series: [{
+      type: "bar", barMaxWidth: 22,
+      data: items.map((d) => ({
+        value: isNum(d.value) ? d.value : null,
+        itemStyle: { color: colorFn ? colorFn(d, p) : p.series[0], opacity: d.muted ? 0.55 : 1,
+          borderRadius: (d.value ?? 0) >= 0 ? [3, 3, 0, 0] : [0, 0, 3, 3] },
+      })),
+      markLine: { silent: true, symbol: "none", label: { show: false }, lineStyle: { color: p.axis, type: "solid" }, data: [{ yAxis: 0 }] },
+    }],
+  });
+  return chart;
+}

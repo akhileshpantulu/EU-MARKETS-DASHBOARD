@@ -159,7 +159,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 12px 24px 32px; outline: none
 .scale-legend { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-top: 4px; }
 .scale-legend .bar { height: 8px; flex: 0 1 220px; border-radius: 4px; }
 
-.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); }
 .tile {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
 }
@@ -203,3 +203,36 @@ table.data tr.highlight td { background: color-mix(in srgb, var(--accent) 10%, t
 .site-footer a { color: var(--text-2); }
 
 .notice { font-size: 13px; color: var(--text-2); background: var(--surface-2); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; }
+
+/* ---------------------------------------------------------- control center */
+.tabs .tab-primary { font-weight: 600; color: var(--text); }
+.tabs-sep {
+  align-self: center; margin: 0 6px 0 10px; padding-left: 12px; border-left: 1px solid var(--grid);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); white-space: nowrap;
+}
+.cc-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px 24px; margin: 4px 0 14px; }
+.cc-title { font-size: 26px; margin: 0; letter-spacing: -0.01em; }
+.cc-head .note { margin: 4px 0 0; color: var(--text-2); font-size: 13.5px; max-width: 720px; }
+.cc-picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  font: inherit; font-size: 12.5px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+  border-radius: 999px; padding: 4px 10px; cursor: pointer;
+}
+.chip:hover { color: var(--text); }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.cc-nav {
+  position: sticky; top: 0; z-index: 5; display: flex; gap: 2px; overflow-x: auto; margin: 16px -4px 4px; padding: 8px 4px;
+  background: color-mix(in srgb, var(--page) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--grid);
+  scrollbar-width: thin;
+}
+.cc-nav a {
+  white-space: nowrap; font-size: 13px; color: var(--text-2); text-decoration: none; padding: 4px 10px; border-radius: 999px;
+}
+.cc-nav a:hover { background: var(--surface-2); color: var(--text); }
+.cc-section { scroll-margin-top: 56px; padding-top: 18px; }
+.cc-section-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 10px; }
+.cc-section-head h2 { font-size: 18px; margin: 0; }
+.cc-section-head .note { margin: 0; font-size: 13px; color: var(--muted); }
+.cc-section .grid:empty { display: none; }
+.cc-slot .loading { padding: 24px 0; }
+.cc-more { display: flex; justify-content: flex-end; }

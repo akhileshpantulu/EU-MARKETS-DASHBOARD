@@ -35,7 +35,10 @@ TABLES = {
                air_passengers_yoy, hicp_all_items_pct, hicp_accommodation_pct, hicp_restaurants_pct,
                unemployment_rate_pct, consumer_confidence_balance, bond_yield_10y_pct,
                accommodation_turnover_index, food_service_turnover_index
-        from analytics.mart_country_monthly order by geo_code, month_start""",
+        from analytics.mart_country_monthly where year >= 2014 order by geo_code, month_start""",
+    "annual_history": """
+        select geo_code, metric, kind, year, months, is_ytd, value, change
+        from analytics.mart_country_annual_history order by geo_code, metric, year""",
     "country_annual": """
         select geo_code, year, is_complete_year, nights, nights_foreign, hotel_nights, arrivals,
                high_season_share, peak_two_month_share, foreign_share, avg_length_of_stay,
@@ -115,7 +118,7 @@ TABLES = {
         order by 1, 2""",
     "fx_monthly": """
         select currency_code, strftime(rate_date, '%Y-%m') as month, units_per_eur
-        from core.fact_fx_rates where frequency = 'monthly' order by 1, 2""",
+        from core.fact_fx_rates where frequency = 'monthly' and rate_date >= date '2014-01-01' order by 1, 2""",
     "rates": """
         select series_code, strftime(rate_date, '%Y-%m-%d') as date, rate_pct
         from core.fact_interest_rates

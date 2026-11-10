@@ -32,21 +32,35 @@ market Eurostat covers, adds 15 more sources and replaces Streamlit with a stati
 
 ## The dashboard
 
+**Control center (home page).** Pick a country (or the EU total) and every section is laid out
+for it on one page, with a sticky jump-to bar: demand, occupancy and length of stay,
+seasonality, regions, source markets, short-stay rentals, air traffic, prices, macro,
+source-market demand health, weather, hotel prices, and FX and rates.
+
+One switch changes every chart on the page:
+
+- **Pace vs prior years**: each calendar month of the latest year against the two years before
+  and 2019, so you see whether the year is running ahead or behind.
+- **Annual history (YoY)**: the change on the previous year for every year since 2005. The
+  latest year is year to date against the same months a year earlier, so it is comparable.
+  Flows (nights, passengers) show % change; rates (occupancy, inflation, unemployment) show the
+  change in the annual average.
+
+**Explore tabs** compare markets side by side:
+
 | Tab | What it shows |
 |---|---|
-| Overview | KPI tiles for the selected market, calendar-month nights vs last year and 2019, country map, YTD growth ranking. Flags newer Eurostat data live. |
-| Markets | Sortable scorecard: latest month, YoY, YTD vs last year and 2019, hotel occupancy, foreign share, length of stay, platform rentals, air traffic, accommodation inflation, unemployment |
-| Country | Domestic vs foreign nights, YoY, hotel occupancy, length of stay, accommodation turnover, annual summary with capacity and intensity |
+| Markets | Country map (YTD growth, vs 2019, foreign share, intensity, occupancy), YTD ranking and a sortable scorecard |
 | Seasonality | Country x month heatmap, peak two-month share, NUTS 2 seasonality map with regional monthly profiles |
 | Regions | NUTS 2 map and table: nights, growth, vs 2019, foreign share, platform share, seasonality |
 | Source markets | Top origin markets for a destination, growth vs 2019, and where a given origin market travels |
 | Short-stay rentals | Airbnb / Booking / Expedia nights vs tourist accommodation, platform share by country and region |
-| Air traffic | Passengers by country; filter to any airport for its monthly traffic, trailing 12 months, vs 2019, origin countries and top routes |
+| Air traffic | Passengers by country; filter to any airport for its traffic, origin countries and top routes |
 | Prices & macro | HICP accommodation and restaurants vs headline, GDP, unemployment, consumer confidence, bond yields |
-| Market demand | Demand health of a destination's top source markets: OECD leading indicator and confidence, retail sales, house prices, unemployment, trips and spending abroad, FX |
+| Market demand | Demand health of a destination's top source markets |
 | Weather | Monthly temperature, sunshine and rain for 37 destinations against the normal |
-| Rates & FX | ECB deposit rate, EUR STR, Euribor 3M, 10-year AAA yield and 14 euro FX pairs, loaded live from the ECB |
-| Hotel prices | Spain: INE ADR, RevPAR and occupancy by tourist zone. Portugal: revenue per guest night by region |
+| Rates & FX | ECB rates and 14 euro FX pairs, loaded live from the ECB |
+| Hotel prices | Spain: ADR, RevPAR and occupancy by tourist zone. Portugal: revenue per guest night by region |
 | Data | Source status and freshness, CSV downloads of every mart, definitions |
 
 One filter row above each tab scopes every chart on it; the selected market carries across
@@ -55,7 +69,7 @@ download.
 
 ## Data sources
 
-All monthly sources are requested from January 2015. See
+All monthly sources are requested from January 2005 (the annual history); the site's monthly files start in 2014. See
 [docs/data_sources.md](docs/data_sources.md) for dimensions, filters and caveats.
 
 | Area | Source | Dataset | Grain |
@@ -140,6 +154,7 @@ their country), `dim_residence`, `dim_accommodation_type`, `dim_partner`, `dim_a
 | `fact_spain_zone_hotel_prices_monthly` | zone x month | ADR, RevPAR, implied occupancy |
 
 **Marts:** `mart_country_monthly` (drill-across of every monthly fact, with YoY and vs-2019),
+`mart_country_annual_history` (every monthly series by year since 2005, with year-to-date comparisons),
 `mart_country_annual` (seasonality, intensity, capacity, platform share),
 `mart_country_scorecard`, `mart_region_annual`, `mart_region_monthly`, `mart_source_markets`,
 `mart_spain_zone_monthly`, `mart_data_freshness`.

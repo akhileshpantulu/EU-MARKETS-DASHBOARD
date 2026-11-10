@@ -20,7 +20,7 @@ SITE_DATA = SITE_DIR / "data"
 MANIFEST = RAW_DIR / "manifest.json"
 
 # First period requested from every monthly / annual source.
-SINCE_YEAR = 2015
+SINCE_YEAR = 2005
 
 EUROSTAT_API = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{code}"
 ECB_API = "https://data-api.ecb.europa.eu/service/data/{flow}/{key}"

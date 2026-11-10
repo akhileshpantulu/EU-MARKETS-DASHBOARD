@@ -4,7 +4,7 @@ import {
   loadTable, loadJSON, groupBy, isNum, h, select, segmented, dataTable, fmtMonth, fmtNum, fmtInt, fmtPct,
   fmtRate, fmtDec, fmtEur, fmtChange, deltaHTML, dateKeyToYm, monthName, downloadCSV,
 } from "./util.js";
-import { card, timeChart, rankBars, heatmap, choropleth, bubbleMap, palette, empty } from "./charts.js";
+import { card, timeChart, rankBars, heatmap, choropleth, bubbleMap, palette, empty, columnChart, legendHTML } from "./charts.js";
 import { liveFx, liveRates, liveEuNights, mergeRows } from "./live.js";
 
 const MONTH_KEYS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
@@ -48,51 +48,11 @@ function latestComplete(rows, key = "year") {
 }
 
 // -------------------------------------------------------------------- overview
-export async function overview(ctx) {
-  const [score, monthly, annual] = await Promise.all([loadTable("scorecard"), loadTable("country_monthly"), loadTable("country_annual")]);
+/** Country map and year-to-date ranking (Markets tab). Clicking a country opens it in the control center. */
+async function marketsMap(ctx, score) {
+  const annual = await loadTable("country_annual");
   const g = ctx.state.geo;
-  ctx.filters.append(geoSelect(ctx));
-  const s = score.find((r) => r.geo_code === g) || {};
-  const ym = (k) => fmtMonth(dateKeyToYm(k));
   const base = ctx.meta.baseline_year;
-
-  const tiles = h("div", { class: "tiles" },
-    tile(`Nights, ${ym(s.nights_date_key)}`, fmtNum(s.latest_nights), `${deltaHTML(s.latest_nights_yoy)} vs a year earlier`),
-    tile("Nights, year to date", fmtNum(s.nights_ytd), `${deltaHTML(s.nights_ytd_yoy)} vs last year · ${deltaHTML(s.nights_ytd_vs_baseline)} vs ${base}`),
-    tile("Foreign guests' share", fmtPct(s.latest_foreign_share), `of nights in ${ym(s.nights_date_key)}`),
-    tile(`Hotel bed occupancy, ${ym(s.occupancy_date_key)}`, fmtPct(s.latest_bed_place_occupancy_rate), `${deltaHTML(s.latest_bed_place_occupancy_change, { pts: true })} vs a year earlier`),
-    tile(`Platform rental nights, ${ym(s.platform_date_key)}`, fmtNum(s.latest_platform_nights), `${deltaHTML(s.latest_platform_nights_yoy)} vs a year earlier`),
-    tile(`Air passengers, ${ym(s.air_date_key)}`, fmtNum(s.latest_air_passengers), `${deltaHTML(s.latest_air_passengers_yoy)} vs a year earlier`),
-    tile(`Accommodation inflation, ${ym(s.hicp_date_key)}`, fmtRate(s.latest_hicp_accommodation_pct), `HICP, all items ${fmtRate(s.latest_hicp_all_items_pct)}`),
-    tile(`Unemployment, ${ym(s.unemployment_date_key)}`, fmtRate(s.latest_unemployment_rate_pct), "seasonally adjusted"),
-  );
-
-  const liveNote = h("p", { class: "notice", hidden: true });
-  if (g === "EU27_2020") {
-    liveEuNights().then(({ month, nights }) => {
-      const snap = dateKeyToYm(s.nights_date_key);
-      if (snap && month > snap) {
-        liveNote.hidden = false;
-        liveNote.innerHTML = `<span class="badge live">live</span> Eurostat has published ${fmtMonth(month)}: ${fmtNum(nights)} nights in the EU. The dashboard picks it up on the next daily refresh.`;
-      }
-    }).catch(() => {});
-  }
-
-  // Calendar-month comparison: this year, last year, baseline.
-  const rows = monthly.filter((r) => r.geo_code === g && isNum(r.nights));
-  const lastYear = rows.length ? Number(rows[rows.length - 1].month.slice(0, 4)) : null;
-  const p = palette();
-  const seriesFor = (y, name, color, width) => ({
-    name, color, width,
-    data: rows.filter((r) => r.month.startsWith(String(y))).map((r) => [r.month.slice(5), r.nights]),
-  });
-  const seasonCard = card({
-    title: "Nights by calendar month", span: 7, height: "map",
-    note: "Nights at all tourist accommodation (hotels, holiday homes, campsites).",
-    legend: [{ label: String(lastYear), color: p.series[0] }, { label: String(lastYear - 1), color: p.series[1] }, { label: String(base), color: p.context }],
-    table: () => ({ columns: ["Month", String(lastYear), String(lastYear - 1), String(base)],
-      rows: MONTH_KEYS.map((m) => [monthName(+m), ...[lastYear, lastYear - 1, base].map((y) => rows.find((r) => r.month === `${y}-${m}`)?.nights ?? null)]) }),
-  });
 
   // Map of countries.
   const metric = ctx.state.ovMetric || "ytd_yoy";
@@ -109,46 +69,38 @@ export async function overview(ctx) {
     ? score.filter((r) => ctx.isCountry(r.geo_code) && r.is_current).map((r) => ({ code: r.geo_code, value: m.get(r) }))
     : annual.filter((r) => r.year === annualYear && ctx.isCountry(r.geo_code)).map((r) => ({ code: r.geo_code, value: m.get(r) }));
   const mapCard = card({
-    title: `Countries: ${m.label}`, span: 5, height: "map",
-    note: m.src === "annual" ? `${annualYear}, nights at tourist accommodation per inhabitant.` : "Latest month each country has published. Click a country to select it.",
+    title: `Countries: ${m.label}`, span: 7, height: "tall",
+    note: m.src === "annual" ? `${annualYear}, nights at tourist accommodation per inhabitant.` : "Latest month each country has published. Click a country to open it in the control center.",
     table: () => ({ columns: ["Country", m.label], rows: mapData.map((d) => [ctx.geoName(d.code), d.value]) }),
   });
 
   const movers = score.filter((r) => ctx.isCountry(r.geo_code) && r.is_current && isNum(r.nights_ytd_yoy));
   const stale = score.filter((r) => ctx.isCountry(r.geo_code) && !r.is_current).map((r) => `${ctx.geoName(r.geo_code)} (to ${fmtMonth(dateKeyToYm(r.nights_date_key))})`);
-  const moversCard = card({ title: "Year-to-date growth by country", span: 12,
-    note: `Nights year to date versus the same months last year. The selected market is highlighted.${stale.length ? ` Not shown, no recent data: ${stale.join(", ")}.` : ""}` });
+  const moversCard = card({ title: "Year-to-date growth by country", span: 5,
+    note: `Nights year to date versus the same months last year. Click a bar to open the country.${stale.length ? ` Not shown, no recent data: ${stale.join(", ")}.` : ""}` });
 
-  ctx.view.append(
-    liveNote,
-    tiles,
-    h("div", { style: "height:16px" }),
-    grid(seasonCard, mapCard, moversCard),
-  );
+  const out = grid(mapCard, moversCard);
   ctx.filters.append(segmented("Map metric", Object.entries(metrics).map(([value, x]) => ({ value, label: x.label })), metric,
     (v) => ctx.setState({ ovMetric: v })));
 
-  timeChart(seasonCard.chartEl, {
-    categories: MONTH_KEYS, xFormat: (v) => monthName(+v),
-    series: [seriesFor(lastYear, String(lastYear), p.series[0], 2.5), seriesFor(lastYear - 1, String(lastYear - 1), p.series[1]),
-      seriesFor(base, String(base), p.context)],
-    yFormat: (v) => fmtNum(v, 0),
-  });
+  return { el: out, draw: async () => {
   choropleth(mapCard.chartEl, {
     name: "countries", geojson: await geo(ctx, "countries"), data: mapData, scale: m.scale, format: m.fmt,
-    selected: g, labelFor: ctx.geoName, onClick: (code) => ctx.isCountry(code) && ctx.setState({ geo: code }),
+    selected: g, labelFor: ctx.geoName, onClick: (code) => ctx.isCountry(code) && ctx.setState({ geo: code, tab: "center" }),
   });
   rankBars(moversCard.chartEl, {
     items: movers.sort((a, b) => b.nights_ytd_yoy - a.nights_ytd_yoy).map((r) => ({ label: ctx.geoName(r.geo_code), value: r.nights_ytd_yoy, code: r.geo_code })),
     format: (v) => fmtChange(v),
     colorFn: (d, pal) => (d.code === g ? pal.series[1] : d.value >= 0 ? pal.div[4] : pal.div[0]),
-    onClick: (d) => ctx.setState({ geo: d.code }),
+    onClick: (d) => ctx.setState({ geo: d.code, tab: "center" }),
   });
+  } };
 }
 
 // --------------------------------------------------------------------- markets
 export async function markets(ctx) {
   const score = await loadTable("scorecard");
+  const map = await marketsMap(ctx, score);
   const group = ctx.state.group || "all";
   ctx.filters.append(segmented("Countries", [
     { value: "all", label: "All" }, { value: "eu", label: "EU27" }, { value: "euro", label: "Euro area" },
@@ -185,68 +137,15 @@ export async function markets(ctx) {
     { key: "latest_unemployment_rate_pct", label: "Unemp.", fmt: (v) => fmtRate(v) },
   ];
   const c = card({ title: "Market scorecard", span: 12,
-    note: "Each country's latest published month. YTD compares the same months of the previous year. Avg stay = nights per arrival. Click a row to open the country.",
+    note: "Each country's latest published month. YTD compares the same months of the previous year. Avg stay = nights per arrival. Click a row to open the country in the control center.",
     table: () => ({ columns: cols.map((x) => x.label), rows: rows.map((r) => cols.map((x) => r[x.key])) }), csvName: "market-scorecard" });
   c.chartEl.replaceWith(dataTable(cols, rows, {
     initialSort: { key: "latest_nights", dir: "desc" }, highlight: (r) => r.geo_code === ctx.state.geo,
-    onRowClick: (r) => ctx.setState({ geo: r.geo_code, tab: "country" }),
+    onRowClick: (r) => ctx.setState({ geo: r.geo_code, tab: "center" }),
   }));
-  ctx.view.append(h("p", { class: "view-intro" }, "Demand, occupancy, rentals, air traffic and prices for every European market Eurostat covers, on one screen. Green and red arrows show the direction of change."), grid(c));
-}
-
-// --------------------------------------------------------------------- country
-export async function country(ctx) {
-  const [monthly, annual] = await Promise.all([loadTable("country_monthly"), loadTable("country_annual")]);
-  const g = ctx.state.geo;
-  ctx.filters.append(geoSelect(ctx));
-  const rows = monthly.filter((r) => r.geo_code === g);
-  const ann = annual.filter((r) => r.geo_code === g);
-  const p = palette();
-  const pick = (k) => rows.map((r) => [r.month, r[k]]);
-  const recent = rows.filter((r) => r.month >= `${Number((rows.at(-1)?.month || "2025").slice(0, 4)) - 3}-01`);
-  const base = ctx.meta.baseline_year;
-
-  const c1 = card({ title: "Nights by guest origin", span: 12, height: "tall",
-    note: "Monthly nights at tourist accommodation, domestic and foreign guests stacked. Drag the slider to zoom.",
-    legend: [{ label: "Domestic guests", color: p.series[0] }, { label: "Foreign guests", color: p.series[1] }],
-    table: () => ({ columns: ["Month", "Domestic", "Foreign", "Total", "Hotels"], rows: rows.map((r) => [r.month, r.nights_domestic, r.nights_foreign, r.nights, r.hotel_nights]) }) });
-  const c2 = card({ title: "Nights: change on a year earlier", span: 6,
-    note: "Last four years.", table: () => ({ columns: ["Month", "YoY"], rows: recent.map((r) => [r.month, r.nights_yoy]) }) });
-  const c3 = card({ title: "Hotel occupancy", span: 6, note: "Net occupancy of bed-places and bedrooms in hotels.",
-    legend: [{ label: "Bed-places", color: p.series[0] }, { label: "Bedrooms", color: p.series[1] }],
-    table: () => ({ columns: ["Month", "Bed-places", "Bedrooms"], rows: rows.map((r) => [r.month, r.bed_place_occupancy_rate, r.room_occupancy_rate]) }) });
-  const c4 = card({ title: "Average length of stay", span: 6, note: "Nights per arrival, all tourist accommodation.",
-    table: () => ({ columns: ["Month", "Nights per arrival"], rows: rows.map((r) => [r.month, r.avg_length_of_stay]) }) });
-  const c5 = card({ title: "Accommodation turnover index", span: 6, note: "Eurostat services turnover, NACE I55 (2021 = 100 where available).",
-    table: () => ({ columns: ["Month", "Index"], rows: rows.map((r) => [r.month, r.accommodation_turnover_index]) }) });
-  const annCols = [
-    { key: "year", label: "Year" },
-    { key: "nights", label: "Nights", fmt: (v) => fmtNum(v) },
-    { key: "nights_yoy", label: "YoY", fmt: (v) => deltaHTML(v) },
-    { key: "nights_vs_baseline", label: `vs ${base}`, fmt: (v) => deltaHTML(v) },
-    { key: "foreign_share", label: "Foreign", fmt: (v) => fmtPct(v, 0) },
-    { key: "high_season_share", label: "Jun-Sep share", fmt: (v) => fmtPct(v, 0) },
-    { key: "avg_length_of_stay", label: "Avg stay", fmt: (v) => fmtDec(v, 1) },
-    { key: "avg_bed_place_occupancy_rate", label: "Hotel occ.", fmt: (v) => fmtPct(v, 0) },
-    { key: "establishments", label: "Establishments", fmt: fmtInt },
-    { key: "bed_places", label: "Bed-places", fmt: (v) => fmtNum(v) },
-    { key: "nights_per_resident", label: "Nights / resident", fmt: (v) => fmtDec(v, 1) },
-    { key: "platform_share", label: "Platform share", fmt: (v) => fmtPct(v, 0) },
-  ];
-  const c6 = card({ title: "Annual summary", span: 12, note: "Growth rates only for years with all twelve months published.",
-    table: () => ({ columns: annCols.map((x) => x.label), rows: ann.map((r) => annCols.map((x) => r[x.key])) }), csvName: `annual-${g}` });
-  c6.chartEl.replaceWith(dataTable(annCols, ann.slice().reverse(), { initialSort: { key: "year", dir: "desc" } }));
-
-  ctx.view.append(grid(c1, c2, c3, c4, c5, c6));
-  timeChart(c1.chartEl, { zoom: true, yFormat: (v) => fmtNum(v, 0), series: [
-    { name: "Domestic guests", data: pick("nights_domestic"), stack: "n", area: true, color: p.series[0] },
-    { name: "Foreign guests", data: pick("nights_foreign"), stack: "n", area: true, color: p.series[1] }] });
-  timeChart(c2.chartEl, { markZero: true, yFormat: (v) => fmtChange(v, { digits: 0 }), series: [
-    { name: "Nights YoY", type: "bar", data: recent.map((r) => [r.month, r.nights_yoy]) }] });
-  timeChart(c3.chartEl, { yFormat: (v) => fmtPct(v, 0), series: [
-    { name: "Bed-places", data: pick("bed_place_occupancy_rate") }, { name: "Bedrooms", data: pick("room_occupancy_rate") }] });
-  timeChart(c4.chartEl, { yFormat: (v) => fmtDec(v, 1), series: [{ name: "Nights per arrival", data: pick("avg_length_of_stay") }] });
-  timeChart(c5.chartEl, { yFormat: (v) => fmtDec(v, 0), series: [{ name: "Turnover index", data: pick("accommodation_turnover_index") }] });
+  ctx.view.append(h("p", { class: "view-intro" }, "Every European market Eurostat covers, side by side. Click a country on the map, the ranking or the table to open its full breakdown in the control center."),
+    map.el, h("div", { style: "height:16px" }), grid(c));
+  await map.draw();
 }
 
 // ----------------------------------------------------------------- seasonality
@@ -748,23 +647,9 @@ async function portugal(ctx) {
     colorFn: (d, pal) => (d.code === region ? pal.series[1] : d.value >= 0 ? pal.div[4] : pal.div[0]) });
 }
 
-// -------------------------------------------------------------- market demand
-export async function demand(ctx) {
-  const [score, monthly, hpi, travel, sourceMarkets, fxMonthly] = await Promise.all([
-    loadTable("market_scorecard"), loadTable("market_demand_monthly"), loadTable("house_prices_quarterly"),
-    loadTable("resident_travel_annual"), loadTable("source_markets"), loadTable("fx_monthly")]);
+/** Demand-health table of a destination's top source markets (Market demand tab and control center). */
+function healthCard(ctx, { dest, market, score, sourceMarkets, fxMonthly, smYear, top, onRowClick, span = 12 }) {
   const marketName = (c) => score.find((m) => m.market_code === c)?.market_name || ctx.geoName(c);
-  const dests = [...new Set(sourceMarkets.map((r) => r.geo_code))];
-  const dest = dests.includes(ctx.state.geo) ? ctx.state.geo : dests.includes("ES") ? "ES" : dests[0];
-  const smYear = Math.max(...sourceMarkets.filter((r) => r.geo_code === dest).map((r) => r.year));
-  const top = sourceMarkets.filter((r) => r.geo_code === dest && r.year === smYear).sort((a, b) => b.nights - a.nights).slice(0, 15);
-  const markets = score.map((m) => m.market_code);
-  const market = markets.includes(ctx.state.market) ? ctx.state.market : top.find((r) => markets.includes(r.partner_code))?.partner_code || "DE";
-  ctx.filters.append(
-    select("Destination", dests.map((c) => ({ value: c, label: ctx.geoName(c) })).sort((a, b) => a.label.localeCompare(b.label)), dest, (v) => ctx.setState({ geo: v })),
-    select("Source market", score.map((m) => ({ value: m.market_code, label: m.market_name })).sort((a, b) => a.label.localeCompare(b.label)),
-      market, (v) => ctx.setState({ market: v })),
-  );
   // FX: change in the market's currency against the euro over 12 months (positive = euro stronger, travel to the euro area dearer).
   const fx12 = (cur) => {
     const l = fxMonthly.filter((r) => r.currency_code === cur);
@@ -796,11 +681,33 @@ export async function demand(ctx) {
     { key: "spend_abroad_yoy", label: "Spend abroad YoY", fmt: (v) => deltaHTML(v) },
     { key: "fx_12m", label: "€ vs currency 1y", fmt: (v) => deltaHTML(v, { invert: true }) },
   ];
-  const c0 = card({ title: `Demand health of ${ctx.geoName(dest)}'s top source markets`, span: 12, csvName: `market-health-${dest}`,
+  const c0 = card({ title: `Demand health of ${ctx.geoName(dest)}'s top source markets`, span, csvName: `market-health-${dest}`,
     note: "Ranked by share of foreign nights. Leading indicator and consumer confidence: OECD, long-term average = 100, Δ in points. Retail volume, house prices, unemployment, trips and spending abroad: Eurostat (European markets only). € vs currency: a stronger euro (red) makes the destination dearer for that market. Click a row for its trends.",
     table: () => ({ columns: cols.map((c) => c.label), rows: rows.map((r) => cols.map((c) => r[c.key])) }) });
   c0.chartEl.replaceWith(dataTable(cols, rows, { initialSort: { key: "share", dir: "desc" }, highlight: (r) => r.code === market,
-    onRowClick: (r) => ctx.setState({ market: r.code }) }));
+    onRowClick }));
+  return c0;
+}
+
+// -------------------------------------------------------------- market demand
+export async function demand(ctx) {
+  const [score, monthly, hpi, travel, sourceMarkets, fxMonthly] = await Promise.all([
+    loadTable("market_scorecard"), loadTable("market_demand_monthly"), loadTable("house_prices_quarterly"),
+    loadTable("resident_travel_annual"), loadTable("source_markets"), loadTable("fx_monthly")]);
+  const marketName = (c) => score.find((m) => m.market_code === c)?.market_name || ctx.geoName(c);
+  const dests = [...new Set(sourceMarkets.map((r) => r.geo_code))];
+  const dest = dests.includes(ctx.state.geo) ? ctx.state.geo : dests.includes("ES") ? "ES" : dests[0];
+  const smYear = Math.max(...sourceMarkets.filter((r) => r.geo_code === dest).map((r) => r.year));
+  const top = sourceMarkets.filter((r) => r.geo_code === dest && r.year === smYear).sort((a, b) => b.nights - a.nights).slice(0, 15);
+  const markets = score.map((m) => m.market_code);
+  const market = markets.includes(ctx.state.market) ? ctx.state.market : top.find((r) => markets.includes(r.partner_code))?.partner_code || "DE";
+  ctx.filters.append(
+    select("Destination", dests.map((c) => ({ value: c, label: ctx.geoName(c) })).sort((a, b) => a.label.localeCompare(b.label)), dest, (v) => ctx.setState({ geo: v })),
+    select("Source market", score.map((m) => ({ value: m.market_code, label: m.market_name })).sort((a, b) => a.label.localeCompare(b.label)),
+      market, (v) => ctx.setState({ market: v })),
+  );
+  const c0 = healthCard(ctx, { dest, market, score, sourceMarkets, fxMonthly, smYear, top,
+    onRowClick: (r) => ctx.setState({ market: r.code }) });
 
   const m = monthly.filter((r) => r.market_code === market);
   const p = palette();
@@ -891,6 +798,410 @@ export async function weather(ctx) {
       { name: String(year - 1), data: yearData(year - 1, key), color: p.series[1] },
       { name: "Normal", data: normalData(normKey), color: p.context }] });
   }
+}
+
+// -------------------------------------------------------------- control center
+const QUICK_PICKS = ["EU27_2020", "ES", "IT", "FR", "DE", "EL", "PT", "HR", "AT", "NL", "CY", "MT"];
+
+const SECTIONS = [
+  ["demand", "Demand"], ["stay", "Occupancy & stay"], ["season", "Seasonality"], ["regions", "Regions"],
+  ["origins", "Source markets"], ["rentals", "Short-stay rentals"], ["air", "Air traffic"], ["prices", "Prices"],
+  ["macro", "Macro"], ["health", "Source-market health"], ["weather", "Weather"], ["hotels", "Hotel prices"], ["fx", "FX & rates"],
+];
+
+/** Formats for the annual "change" of each metric kind. */
+const CHANGE_FMT = {
+  sum: (v) => fmtChange(v),
+  index: (v) => fmtChange(v),
+  rate01: (v) => signed(v * 100, 1, " pts"),
+  pct: (v) => signed(v, 1, " pts"),
+  level: (v) => signed(v, 2),
+};
+
+function section(id, title, note, ...children) {
+  return h("section", { class: "cc-section", id: `cc-${id}` },
+    h("div", { class: "cc-section-head" }, h("h2", {}, title), note ? h("p", { class: "note", html: note }) : null),
+    h("div", { class: "grid" }, children.flat().map((c) => c.el || c)));
+}
+
+function exploreLink(ctx, tab, label, patch = {}) {
+  return h("button", { class: "link-button", type: "button", onclick: () => ctx.setState({ tab, ...patch }) }, `${label} →`);
+}
+
+/** Pace view: one line per year by calendar month (latest, two before, baseline). */
+function paceChart(el, rows, key, { fmt, base, emptyMessage }) {
+  const withData = rows.filter((r) => isNum(r[key]));
+  if (!withData.length) return empty(el, emptyMessage);
+  const p = palette();
+  const last = Number(withData.at(-1).month.slice(0, 4));
+  const years = [last, last - 1, last - 2].filter((y) => y !== base);
+  const colors = [p.series[0], p.series[1], p.series[2]];
+  const series = years.map((y, i) => ({ name: String(y), color: colors[i], width: i === 0 ? 2.5 : 2,
+    data: withData.filter((r) => r.month.startsWith(String(y))).map((r) => [r.month.slice(5), r[key]]) }));
+  if (base) series.push({ name: String(base), color: p.context, data: withData.filter((r) => r.month.startsWith(String(base))).map((r) => [r.month.slice(5), r[key]]) });
+  return { series: series.filter((s) => s.data.length), chart: timeChart(el, { categories: MONTH_KEYS, xFormat: (v) => monthName(+v), yFormat: fmt, series: series.filter((s) => s.data.length) }) };
+}
+
+/**
+ * One metric in the current view mode: pace (calendar months, this year vs prior years)
+ * or annual history (change on the previous year, latest year to date).
+ */
+function metricCard(ctx, { title, note, rows, hist, key, metric, fmt, span = 4, emptyMessage, polarity = "up" }) {
+  const mode = ctx.state.view === "annual" ? "annual" : "pace";
+  const base = ctx.meta.baseline_year;
+  const h_ = hist.filter((r) => r.metric === (metric || key)).sort((a, b) => a.year - b.year);
+  const kind = h_[0]?.kind || "sum";
+  const changeFmt = CHANGE_FMT[kind];
+  if (mode === "annual") {
+    const items = h_.filter((r) => isNum(r.change)).map((r) => ({
+      label: r.is_ytd ? `${r.year} YTD` : String(r.year), value: kind === "rate01" ? r.change : r.change, muted: r.is_ytd, raw: r }));
+    const ytd = h_.find((r) => r.is_ytd);
+    const c = card({ title, span,
+      note: `${kind === "sum" || kind === "index" ? "Change on the previous year" : "Change in the annual average"}${ytd ? `; ${ytd.year} compares ${ytd.months} months with the same months of ${ytd.year - 1}` : ""}.${note ? ` ${note}` : ""}`,
+      table: () => ({ columns: ["Year", "Months", kind === "sum" ? "Total" : "Average", "Change"],
+        rows: h_.map((r) => [r.is_ytd ? `${r.year} YTD` : r.year, r.months, r.value, r.change]) }) });
+    return { card: c, draw: () => columnChart(c.chartEl, { items, emptyMessage,
+      format: kind === "rate01" ? (v) => signed(v * 100, 1, "") : kind === "sum" || kind === "index" ? (v) => fmtChange(v, { digits: 0 }) : (v) => signed(v, 1),
+      // polarity: "up" = rise is good (blue), "down" = fall is good, "neutral" = direction carries no judgement.
+      colorFn: (d, pal) => (polarity === "neutral" ? pal.series[0]
+        : (d.value >= 0) === (polarity === "up") ? pal.div[4] : pal.div[0]) }) };
+  }
+  const p = palette();
+  const latest = rows.filter((r) => isNum(r[key])).at(-1);
+  const last = latest ? Number(latest.month.slice(0, 4)) : null;
+  const legendYears = last ? [last, last - 1, last - 2].filter((y) => y !== base) : [];
+  const legend = [...legendYears.map((y, i) => ({ label: String(y), color: [p.series[0], p.series[1], p.series[2]][i] })), { label: String(base), color: p.context }];
+  const c = card({ title, span, legend: latest ? legend : null,
+    note: `${latest ? `Latest ${fmtMonth(latest.month)}: <b>${fmt(latest[key])}</b>. ` : ""}${note || ""}`,
+    table: () => ({ columns: ["Month", ...legendYears.map(String), String(base)],
+      rows: MONTH_KEYS.map((m) => [monthName(+m), ...[...legendYears, base].map((y) => rows.find((r) => r.month === `${y}-${m}`)?.[key] ?? null)]) }) });
+  return { card: c, draw: () => paceChart(c.chartEl, rows, key, { fmt, base, emptyMessage }) };
+}
+
+export async function center(ctx) {
+  const g = ctx.state.geo;
+  const mode = ctx.state.view === "annual" ? "annual" : "pace";
+  const base = ctx.meta.baseline_year;
+  const [score, monthly, hist] = await Promise.all([loadTable("scorecard"), loadTable("country_monthly"), loadTable("annual_history")]);
+  ctx.filters.append(
+    geoSelect(ctx, { label: "Country" }),
+    segmented("View", [{ value: "pace", label: `Pace vs prior years` }, { value: "annual", label: "Annual history (YoY)" }], mode,
+      (v) => ctx.setState({ view: v === "pace" ? null : v })),
+  );
+  const s = score.find((r) => r.geo_code === g) || {};
+  const rows = monthly.filter((r) => r.geo_code === g);
+  const hg = hist.filter((r) => r.geo_code === g);
+  const isCountry = ctx.isCountry(g);
+  const ym = (k) => fmtMonth(dateKeyToYm(k));
+  const firstYear = hg.length ? Math.min(...hg.map((r) => r.year)) : null;
+
+  const picks = h("div", { class: "cc-picks" }, QUICK_PICKS.filter((c) => ctx.geoMeta(c)).map((c) =>
+    h("button", { type: "button", class: "chip", "aria-pressed": String(c === g), onclick: () => ctx.setState({ geo: c }) }, ctx.geoName(c).replace("European Union - 27 countries (from 2020)", "EU 27"))));
+  const nav = h("nav", { class: "cc-nav", "aria-label": "Sections" }, SECTIONS.map(([id, label]) =>
+    h("a", { href: `#cc-${id}`, onclick: (e) => { e.preventDefault(); document.getElementById(`cc-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); } }, label)));
+  const head = h("div", { class: "cc-head" },
+    h("div", {}, h("h2", { class: "cc-title" }, ctx.geoName(g)),
+      h("p", { class: "note", html: `${mode === "pace"
+        ? `Pace: each month of the latest year against the two years before and ${base}.`
+        : `Annual history since ${firstYear ?? "n/a"}: change on the previous year; the latest year is year to date against the same months a year earlier.`}${s.is_current === false ? " <b>This market has no recent Eurostat tourism data.</b>" : ""}` })),
+    picks);
+  const tiles = h("div", { class: "tiles" },
+    tile(`Nights, ${ym(s.nights_date_key)}`, fmtNum(s.latest_nights), `${deltaHTML(s.latest_nights_yoy)} vs a year earlier`),
+    tile("Nights, year to date", fmtNum(s.nights_ytd), `${deltaHTML(s.nights_ytd_yoy)} vs last year · ${deltaHTML(s.nights_ytd_vs_baseline)} vs ${base}`),
+    tile(`Hotel bed occupancy, ${ym(s.occupancy_date_key)}`, fmtPct(s.latest_bed_place_occupancy_rate), `${deltaHTML(s.latest_bed_place_occupancy_change, { pts: true })} vs a year earlier`),
+    tile(`Air passengers, ${ym(s.air_date_key)}`, fmtNum(s.latest_air_passengers), `${deltaHTML(s.latest_air_passengers_yoy)} vs a year earlier`),
+    tile(`Platform rental nights, ${ym(s.platform_date_key)}`, fmtNum(s.latest_platform_nights), `${deltaHTML(s.latest_platform_nights_yoy)} vs a year earlier`),
+    tile(`Accommodation inflation, ${ym(s.hicp_date_key)}`, fmtRate(s.latest_hicp_accommodation_pct), `HICP all items ${fmtRate(s.latest_hicp_all_items_pct)}`),
+  );
+  const slots = Object.fromEntries(SECTIONS.map(([id]) => [id, h("div", { class: "cc-slot" }, h("div", { class: "loading" }, "Loading…"))]));
+  const liveNote = h("p", { class: "notice", hidden: true });
+  if (g === "EU27_2020") {
+    liveEuNights().then(({ month, nights }) => {
+      const snap = dateKeyToYm(s.nights_date_key);
+      if (snap && month > snap) {
+        liveNote.hidden = false;
+        liveNote.innerHTML = `<span class="badge live">live</span> Eurostat has published ${fmtMonth(month)}: ${fmtNum(nights)} nights in the EU. The dashboard picks it up on the next daily refresh.`;
+      }
+    }).catch(() => {});
+  }
+  ctx.view.append(head, liveNote, tiles, nav, ...Object.values(slots));
+
+  const mc = (def) => metricCard(ctx, { rows, hist: hg, ...def });
+  const put = (id, title, note, defs, extra = []) => {
+    const made = defs.map((d) => (d.card ? d : mc(d)));
+    slots[id].replaceWith(section(id, title, note, made.map((m) => m.card), extra));
+    made.forEach((m) => m.draw?.());
+  };
+  const pctFmt = (d) => (v) => fmtPct(v, d);
+
+  // Each section renders independently so a slow file does not hold up the page.
+  const tasks = {
+    demand: async () => put("demand", "Demand", "Nights spent at tourist accommodation (hotels, holiday homes, campsites).", [
+      { title: "Nights, all guests", key: "nights", fmt: (v) => fmtNum(v, 1) },
+      { title: "Nights, foreign guests", key: "nights_foreign", fmt: (v) => fmtNum(v, 1) },
+      { title: "Nights, domestic guests", key: "nights_domestic", fmt: (v) => fmtNum(v, 1) }]),
+
+    stay: async () => put("stay", "Occupancy & length of stay", "Hotel occupancy is Eurostat's net bed-place occupancy; length of stay is nights per arrival.", [
+      { title: "Hotel bed-place occupancy", key: "bed_place_occupancy_rate", fmt: pctFmt(0) },
+      { title: "Average length of stay (nights)", key: "avg_length_of_stay", fmt: (v) => fmtDec(v, 2) },
+      { title: "Arrivals", key: "arrivals", fmt: (v) => fmtNum(v, 1) }]),
+
+    season: async () => {
+      const [annual, regions] = await Promise.all([loadTable("country_annual"), loadTable("region_annual")]);
+      const ann = annual.filter((r) => r.geo_code === g && r.is_complete_year);
+      const p = palette();
+      let c1;
+      if (mode === "annual") {
+        c1 = card({ title: "Two busiest months' share of annual nights", span: 6, note: "Higher means more seasonal.",
+          table: () => ({ columns: ["Year", "Peak two-month share", "June-September share"], rows: ann.map((r) => [r.year, r.peak_two_month_share, r.high_season_share]) }) });
+        c1.draw = () => timeChart(c1.chartEl, { yFormat: pctFmt(0), series: [
+          { name: "Peak two months", data: ann.map((r) => [String(r.year), r.peak_two_month_share]) },
+          { name: "June-September", data: ann.map((r) => [String(r.year), r.high_season_share]), color: p.series[1] }] });
+        c1.el.querySelector(".card-head").after(legendHTML([{ label: "Peak two months", color: p.series[0] }, { label: "June-September", color: p.series[1] }]));
+      } else {
+        const lastFull = ann.at(-1)?.year;
+        const share = (y) => {
+          const ms = rows.filter((r) => r.month.startsWith(String(y)) && isNum(r.nights));
+          const tot = ms.reduce((a, r) => a + r.nights, 0);
+          return ms.map((r) => [r.month.slice(5), tot ? r.nights / tot : null]);
+        };
+        c1 = card({ title: `Share of the year's nights by month`, span: 6, note: `${lastFull ?? "n/a"} against ${base}.`,
+          legend: [{ label: String(lastFull), color: p.series[0] }, { label: String(base), color: p.context }],
+          table: () => ({ columns: ["Month", String(lastFull), String(base)], rows: MONTH_KEYS.map((m, i) => [monthName(+m), share(lastFull)[i]?.[1] ?? null, share(base)[i]?.[1] ?? null]) }) });
+        c1.draw = () => timeChart(c1.chartEl, { categories: MONTH_KEYS, xFormat: (v) => monthName(+v), yFormat: pctFmt(0), series: [
+          { name: String(lastFull), data: share(lastFull), color: p.series[0], width: 2.5 }, { name: String(base), data: share(base), color: p.context }] });
+      }
+      const ry = Math.max(...regions.filter((r) => r.geo_code.startsWith(g) && isNum(r.peak_two_month_share)).map((r) => r.year), 0);
+      const reg = regions.filter((r) => isCountry && r.geo_code.startsWith(g) && r.year === ry && isNum(r.peak_two_month_share))
+        .sort((a, b) => b.peak_two_month_share - a.peak_two_month_share);
+      const c2 = card({ title: `Most seasonal regions${ry ? `, ${ry}` : ""}`, span: 6, note: isCountry ? "Share of nights in the two busiest months, NUTS 2 regions." : "Select a country to see its regions.",
+        table: () => ({ columns: ["Region", "Peak two-month share", "Peak month"], rows: reg.map((r) => [ctx.geoName(r.geo_code), r.peak_two_month_share, r.peak_month]) }) });
+      c2.draw = () => rankBars(c2.chartEl, { items: reg.slice(0, 12).map((r) => ({ label: ctx.geoName(r.geo_code), value: r.peak_two_month_share })), format: pctFmt(0) });
+      put("season", "Seasonality", null, [{ card: c1, draw: c1.draw }, { card: c2, draw: c2.draw }]);
+    },
+
+    regions: async () => {
+      if (!isCountry) return put("regions", "Regions", "Regional data is shown for individual countries.", []);
+      const regions = await loadTable("region_annual");
+      const yrs = regions.filter((r) => r.geo_code.startsWith(g) && isNum(r.nights)).map((r) => r.year);
+      const ry = yrs.length ? Math.max(...yrs) : null;
+      const reg = regions.filter((r) => r.geo_code.startsWith(g) && r.year === ry).map((r) => ({ ...r, name: ctx.geoName(r.geo_code) }));
+      const c1 = card({ title: `Nights by region, ${ry ?? "n/a"}`, span: 5 });
+      const draw1 = () => rankBars(c1.chartEl, { items: reg.filter((r) => isNum(r.nights)).sort((a, b) => b.nights - a.nights).slice(0, 15).map((r) => ({ label: r.name, value: r.nights })), format: (v) => fmtNum(v) });
+      const cols = [
+        { key: "name", label: "Region", text: true }, { key: "nights", label: "Nights", fmt: (v) => fmtNum(v) },
+        { key: "nights_yoy", label: "YoY", fmt: (v) => deltaHTML(v) }, { key: "nights_vs_baseline", label: `vs ${base}`, fmt: (v) => deltaHTML(v) },
+        { key: "foreign_share", label: "Foreign", fmt: pctFmt(0) }, { key: "platform_share", label: "Platform share", fmt: pctFmt(0) },
+        { key: "share_of_country_nights", label: "Share", fmt: pctFmt(0) }];
+      const c2 = card({ title: "Regional scorecard", span: 7, csvName: `regions-${g}`,
+        table: () => ({ columns: cols.map((c) => c.label), rows: reg.map((r) => cols.map((c) => r[c.key])) }) });
+      c2.chartEl.replaceWith(dataTable(cols, reg, { initialSort: { key: "nights", dir: "desc" } }));
+      put("regions", "Regions", "NUTS 2 regions, annual nights at tourist accommodation.", [{ card: c1, draw: draw1 }, { card: c2 }],
+        [h("div", { class: "span-12 cc-more" }, exploreLink(ctx, "regions", "Regional map", { regCountry: g }))]);
+    },
+
+    origins: async () => {
+      const sm = await loadTable("source_markets");
+      const partners = new Map(ctx.meta.partners.map((p) => [p.partner_code, p.partner_name]));
+      const pname = (c) => partners.get(c) || ctx.geoName(c);
+      const mine = sm.filter((r) => r.geo_code === g);
+      if (!mine.length) return put("origins", "Source markets", "Eurostat publishes guests' country of residence for individual countries only.", []);
+      const year = Math.max(...mine.map((r) => r.year));
+      const top = mine.filter((r) => r.year === year).sort((a, b) => b.nights - a.nights).slice(0, 12);
+      const p = palette();
+      let c1;
+      if (mode === "annual") {
+        const five = top.slice(0, 5).map((r) => r.partner_code);
+        const years = [...new Set(mine.map((r) => r.year))].sort();
+        c1 = card({ title: "Nights by top five source markets", span: 7, note: "Annual nights at all tourist accommodation.",
+          legend: five.map((c, i) => ({ label: pname(c), color: p.series[i] })),
+          table: () => ({ columns: ["Year", ...five.map(pname)], rows: years.map((y) => [y, ...five.map((c) => mine.find((r) => r.year === y && r.partner_code === c)?.nights ?? null)]) }) });
+        c1.draw = () => timeChart(c1.chartEl, { yFormat: (v) => fmtNum(v, 0), series: five.map((c, i) => ({ name: pname(c), color: p.series[i],
+          data: years.map((y) => [String(y), mine.find((r) => r.year === y && r.partner_code === c)?.nights ?? null]) })) });
+      } else {
+        c1 = card({ title: `Share of foreign nights, ${year}`, span: 7,
+          table: () => ({ columns: ["Market", "Nights", "Share", "YoY"], rows: top.map((r) => [pname(r.partner_code), r.nights, r.share_of_foreign_nights, r.nights_yoy]) }) });
+        c1.draw = () => rankBars(c1.chartEl, { items: top.map((r) => ({ label: pname(r.partner_code), value: r.share_of_foreign_nights })), format: pctFmt(1) });
+      }
+      const c2 = card({ title: `Growth vs ${base}, ${year}`, span: 5, note: "Top 12 markets by nights." });
+      const draw2 = () => rankBars(c2.chartEl, { items: top.filter((r) => isNum(r.nights_vs_baseline)).map((r) => ({ label: pname(r.partner_code), value: r.nights_vs_baseline })),
+        format: (v) => fmtChange(v), colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) });
+      put("origins", "Source markets", "Guests' country of residence (Eurostat, annual).", [{ card: c1, draw: c1.draw }, { card: c2, draw: draw2 }]);
+    },
+
+    rentals: async () => put("rentals", "Short-stay rentals", "Nights booked through Airbnb, Booking and Expedia (Eurostat experimental statistics, published quarterly).", [
+      { title: "Platform rental nights", key: "platform_nights", fmt: (v) => fmtNum(v, 1), span: 6 },
+      { title: "Hotel nights (for comparison)", key: "hotel_nights", fmt: (v) => fmtNum(v, 1), span: 6 }]),
+
+    air: async () => {
+      const airports = await loadTable("airport_summary");
+      const mine = airports.filter((a) => (isCountry ? a.country_code === g : true) && isNum(a.passengers_12m)).slice(0, 10);
+      const label = (a) => (a.city && a.iata_code ? `${a.city} (${a.iata_code})` : a.airport_name);
+      const cols = [{ key: "name", label: "Airport", text: true }, { key: "passengers_12m", label: "Trailing 12m", fmt: (v) => fmtNum(v) },
+        { key: "passengers_12m_yoy", label: "YoY", fmt: (v) => deltaHTML(v) }, { key: "passengers_12m_vs_baseline", label: `vs ${base}`, fmt: (v) => deltaHTML(v) }];
+      const t = mine.map((a) => ({ ...a, name: label(a) }));
+      const c3 = card({ title: "Top airports", span: 4, note: "Click an airport for its routes and origin countries.",
+        table: () => ({ columns: cols.map((c) => c.label), rows: t.map((r) => cols.map((c) => r[c.key])) }) });
+      c3.chartEl.replaceWith(dataTable(cols, t, { initialSort: { key: "passengers_12m", dir: "desc" },
+        onRowClick: (r) => ctx.setState({ tab: "air", airport: r.airport_code, geo: isCountry ? g : r.country_code }) }));
+      put("air", "Air traffic", "Passengers carried (arrivals plus departures).", [
+        { title: "Air passengers, all flights", key: "air_passengers", fmt: (v) => fmtNum(v, 1) },
+        { title: "International passengers", key: "air_passengers_international", fmt: (v) => fmtNum(v, 1) },
+        { card: c3 }]);
+    },
+
+    prices: async () => put("prices", "Prices", "HICP annual rate of change and Eurostat's accommodation turnover index.", [
+      { title: "Accommodation services inflation", key: "hicp_accommodation_pct", fmt: (v) => fmtRate(v), polarity: "neutral" },
+      { title: "Restaurant and café inflation", key: "hicp_restaurants_pct", fmt: (v) => fmtRate(v), polarity: "neutral" },
+      { title: "Accommodation turnover index", key: "accommodation_turnover_index", fmt: (v) => fmtDec(v, 0) }]),
+
+    macro: async () => {
+      const gdp = await loadTable("gdp_quarterly");
+      const q = gdp.filter((r) => r.geo_code === g);
+      let c4;
+      if (mode === "annual") {
+        const byYear = [...groupBy(q, (r) => r.quarter_start.slice(0, 4)).entries()].filter(([, l]) => l.length === 4)
+          .map(([y, l]) => ({ label: y, value: l.reduce((a, r) => a + r.gdp_growth_yoy_pct, 0) / 4 }));
+        c4 = card({ title: "Real GDP growth", span: 6, note: "Annual average of quarterly growth on a year earlier, %.",
+          table: () => ({ columns: ["Year", "Growth %"], rows: byYear.map((r) => [r.label, r.value]) }) });
+        c4.draw = () => columnChart(c4.chartEl, { items: byYear, format: (v) => fmtRate(v, 1), colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) });
+      } else {
+        const recent = q.slice(-16);
+        c4 = card({ title: "Real GDP growth", span: 6, note: "Same quarter of the previous year, last four years.",
+          table: () => ({ columns: ["Quarter", "Growth %"], rows: recent.map((r) => [r.quarter_start, r.gdp_growth_yoy_pct]) }) });
+        c4.draw = () => columnChart(c4.chartEl, { items: recent.map((r) => ({ label: r.quarter_start, value: r.gdp_growth_yoy_pct })), format: (v) => fmtRate(v, 1),
+          colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) });
+      }
+      put("macro", "Macro", "The domestic backdrop. Unemployment and confidence are seasonally adjusted.", [
+        { title: "Unemployment rate", key: "unemployment_rate_pct", fmt: (v) => fmtRate(v), span: 6, polarity: "down" },
+        { title: "Consumer confidence (balance)", key: "consumer_confidence_balance", fmt: (v) => fmtDec(v, 1), span: 6 },
+        { title: "10-year government bond yield", key: "bond_yield_10y_pct", fmt: (v) => fmtRate(v, 2), span: 6, polarity: "neutral" },
+        { card: c4, draw: c4.draw }]);
+    },
+
+    health: async () => {
+      const [mscore, sm, fxMonthly] = await Promise.all([loadTable("market_scorecard"), loadTable("source_markets"), loadTable("fx_monthly")]);
+      const mine = sm.filter((r) => r.geo_code === g);
+      if (!mine.length) return put("health", "Source-market health", "Shown for countries with Eurostat source-market data.", []);
+      const smYear = Math.max(...mine.map((r) => r.year));
+      const top = mine.filter((r) => r.year === smYear).sort((a, b) => b.nights - a.nights).slice(0, 12);
+      const c = healthCard(ctx, { dest: g, market: null, score: mscore, sourceMarkets: sm, fxMonthly, smYear, top,
+        onRowClick: (r) => ctx.setState({ tab: "demand", market: r.code }) });
+      put("health", "Source-market health", "Is demand in the countries guests come from strengthening or weakening?", [{ card: c }]);
+    },
+
+    weather: async () => {
+      const w = await loadTable("weather_monthly");
+      const locs = ctx.meta.weather_locations.filter((l) => (isCountry ? l.country_code === g : true));
+      const codes = new Set(locs.map((l) => l.location_code));
+      const mine = w.filter((r) => codes.has(r.location_code));
+      if (!mine.length) return put("weather", "Weather", "No destinations with weather data in this country yet.", []);
+      const loc = locs.find((l) => mine.some((r) => r.location_code === l.location_code));
+      const series = mine.filter((r) => r.location_code === loc.location_code);
+      const p = palette();
+      let c1;
+      if (mode === "annual") {
+        const byYear = [...groupBy(series.filter((r) => isNum(r.temp_anomaly_c)), (r) => r.month.slice(0, 4)).entries()]
+          .map(([y, l]) => ({ label: l.length < 12 ? `${y} YTD` : y, value: l.reduce((a, r) => a + r.temp_anomaly_c, 0) / l.length, muted: l.length < 12 }));
+        c1 = card({ title: `Temperature against normal: ${loc.location_name}`, span: 6, note: "Average monthly anomaly of the mean temperature, °C. History backfills over the first daily runs.",
+          table: () => ({ columns: ["Year", "Anomaly °C"], rows: byYear.map((r) => [r.label, r.value]) }) });
+        c1.draw = () => columnChart(c1.chartEl, { items: byYear, format: (v) => signed(v, 1, "°"), colorFn: (d, pal) => (d.value >= 0 ? pal.div[0] : pal.div[4]),
+          emptyMessage: "The weather normal needs a few more days of history backfill." });
+      } else {
+        const last = Number(series.at(-1).month.slice(0, 4));
+        const norm = MONTH_KEYS.map((m) => [m, series.find((r) => r.month.slice(5) === m && isNum(r.normal_max_temp_c))?.normal_max_temp_c ?? null]);
+        c1 = card({ title: `Average daily high: ${loc.location_name}`, span: 6,
+          legend: [{ label: String(last), color: p.series[0] }, { label: String(last - 1), color: p.series[1] }, { label: "Normal", color: p.context }],
+          table: () => ({ columns: ["Month", String(last), String(last - 1), "Normal"], rows: MONTH_KEYS.map((m, i) => [monthName(+m),
+            series.find((r) => r.month === `${last}-${m}`)?.avg_max_temp_c ?? null, series.find((r) => r.month === `${last - 1}-${m}`)?.avg_max_temp_c ?? null, norm[i][1]]) }) });
+        c1.draw = () => timeChart(c1.chartEl, { categories: MONTH_KEYS, xFormat: (v) => monthName(+v), yFormat: (v) => `${v.toFixed(0)}°`, series: [
+          { name: String(last), color: p.series[0], width: 2.5, data: series.filter((r) => r.month.startsWith(String(last))).map((r) => [r.month.slice(5), r.avg_max_temp_c]) },
+          { name: String(last - 1), color: p.series[1], data: series.filter((r) => r.month.startsWith(String(last - 1))).map((r) => [r.month.slice(5), r.avg_max_temp_c]) },
+          { name: "Normal", color: p.context, data: norm }] });
+      }
+      const latest = mine.reduce((m, r) => (r.month > m ? r.month : m), "");
+      const t = mine.filter((r) => r.month === latest).map((r) => ({ ...r, name: locs.find((l) => l.location_code === r.location_code)?.location_name }));
+      const cols = [{ key: "name", label: "Destination", text: true }, { key: "avg_max_temp_c", label: "Avg high °C", fmt: (v) => fmtDec(v, 1) },
+        { key: "temp_anomaly_c", label: "vs normal", fmt: (v) => signed(v, 1, "°C") }, { key: "sunshine_hours", label: "Sun h", fmt: (v) => fmtDec(v, 0) },
+        { key: "precipitation_vs_normal", label: "Rain vs normal", fmt: pctFmt(0) }];
+      const c2 = card({ title: `Destinations, ${fmtMonth(latest)}`, span: 6, table: () => ({ columns: cols.map((c) => c.label), rows: t.map((r) => cols.map((c) => r[c.key])) }) });
+      c2.chartEl.replaceWith(dataTable(cols, t, { initialSort: { key: "avg_max_temp_c", dir: "desc" }, onRowClick: (r) => ctx.setState({ tab: "weather", loc: r.location_code }) }));
+      put("weather", "Weather", "Open-Meteo ERA5 reanalysis.", [{ card: c1, draw: c1.draw }, { card: c2 }]);
+    },
+
+    hotels: async () => {
+      if (g === "PT") {
+        const pt = (await loadTable("portugal_prices_monthly")).filter((r) => r.region_code === "PT" && r.accommodation_type_code === "01");
+        const histPt = [...groupBy(pt.filter((r) => isNum(r.revenue_per_night_eur)), (r) => r.month.slice(0, 4)).entries()].map(([y, l]) => ({ year: Number(y), months: l.length, l }));
+        const items = histPt.map(({ year, months, l }) => {
+          const prev = pt.filter((r) => r.month.startsWith(String(year - 1)) && l.some((x) => x.month.slice(5) === r.month.slice(5)));
+          const avg = (a) => a.reduce((s2, r) => s2 + r.lodging_income_eur, 0) / a.reduce((s2, r) => s2 + r.nights, 0);
+          return { label: months < 12 ? `${year} YTD` : String(year), value: prev.length === months ? avg(l) / avg(prev) - 1 : null, muted: months < 12 };
+        });
+        let c1;
+        if (mode === "annual") {
+          c1 = card({ title: "Hotel revenue per guest night", span: 12, note: "Change on the previous year (Statistics Portugal, hotels and similar).",
+            table: () => ({ columns: ["Year", "Change"], rows: items.map((r) => [r.label, r.value]) }) });
+          c1.draw = () => columnChart(c1.chartEl, { items, format: (v) => fmtChange(v, { digits: 0 }), colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) });
+        } else {
+          const m = metricCard(ctx, { title: "Hotel revenue per guest night", rows: pt, hist: [], key: "revenue_per_night_eur", fmt: fmtEur, span: 12,
+            note: "Lodging income ÷ nights, hotels and similar (Statistics Portugal)." });
+          c1 = m.card; c1.draw = m.draw;
+        }
+        return put("hotels", "Hotel prices", null, [{ card: c1, draw: c1.draw }], [h("div", { class: "span-12 cc-more" }, exploreLink(ctx, "spain", "Portuguese regions", { pc: "PT" }))]);
+      }
+      if (g === "ES") {
+        const es = await loadTable("spain_zones_monthly");
+        const zones = new Map(ctx.meta.zones.map((z) => [z.zone_key, z]));
+        const latest = es.reduce((m, r) => (r.month > m ? r.month : m), "");
+        const t = es.filter((r) => r.month === latest).map((r) => ({ ...r, name: zones.get(r.zone_key)?.zone_name, region: zones.get(r.zone_key)?.region_name }));
+        const cols = [{ key: "name", label: "Zone", text: true }, { key: "region", label: "Region", text: true }, { key: "adr_eur", label: "ADR", fmt: fmtEur },
+          { key: "adr_yoy", label: "ADR YoY", fmt: (v) => deltaHTML(v) }, { key: "revpar_eur", label: "RevPAR", fmt: fmtEur },
+          { key: "revpar_yoy", label: "RevPAR YoY", fmt: (v) => deltaHTML(v) }, { key: "implied_room_occupancy_rate", label: "Occupancy", fmt: pctFmt(0) }];
+        const c1 = card({ title: `Hotel prices by tourist zone, ${fmtMonth(latest)}`, span: 12, csvName: "spain-zones",
+          table: () => ({ columns: cols.map((c) => c.label), rows: t.map((r) => cols.map((c) => r[c.key])) }) });
+        c1.chartEl.replaceWith(dataTable(cols, t, { initialSort: { key: "adr_eur", dir: "desc" }, maxRows: 15,
+          onRowClick: (r) => ctx.setState({ tab: "spain", zone: r.zone_key, pc: null }) }));
+        return put("hotels", "Hotel prices", "INE hotel profitability indicators (ADR, RevPAR). Top 15 zones by ADR; click a zone for its history.", [{ card: c1 }]);
+      }
+      put("hotels", "Hotel prices", "Eurostat publishes no hotel prices. National ADR / RevPAR series are wired in for Spain (INE) and Portugal (revenue per night); other national offices can be added.", []);
+    },
+
+    fx: async () => {
+      const cur = ctx.geoMeta(g)?.currency_code;
+      if (cur && cur !== "EUR") {
+        const fx = (await loadTable("fx_monthly")).filter((r) => r.currency_code === cur);
+        const rowsFx = fx.map((r) => ({ month: r.month, rate: r.units_per_eur }));
+        let made;
+        if (mode === "annual") {
+          const byYear = [...groupBy(rowsFx, (r) => r.month.slice(0, 4)).entries()].map(([y, l]) => ({ y, avg: l.reduce((a, r) => a + r.rate, 0) / l.length, n: l.length }));
+          const items = byYear.map((r, i) => ({ label: r.n < 12 ? `${r.y} YTD` : r.y, value: i ? r.avg / byYear[i - 1].avg - 1 : null, muted: r.n < 12 }));
+          const c = card({ title: `EUR/${cur}: change in the annual average`, span: 12, note: "Positive = the euro bought more " + cur + " (the destination is cheaper for euro-area visitors).",
+            table: () => ({ columns: ["Year", "Average", "Change"], rows: byYear.map((r, i) => [r.y, r.avg, items[i].value]) }) });
+          made = { card: c, draw: () => columnChart(c.chartEl, { items: items.slice(1), format: (v) => fmtChange(v, { digits: 0 }), colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) }) };
+        } else {
+          made = metricCard(ctx, { title: `EUR/${cur}, monthly average`, rows: rowsFx, hist: [], key: "rate", fmt: (v) => fmtDec(v, v > 50 ? 1 : 3), span: 12 });
+        }
+        return put("fx", "FX & rates", `${cur} per euro (Eurostat monthly averages).`, [made], [h("div", { class: "span-12 cc-more" }, exploreLink(ctx, "rates", "Live ECB rates", { ccy: cur }))]);
+      }
+      const rates = await loadTable("rates");
+      const p = palette();
+      const order = ["deposit_rate", "euribor_3m", "yield_10y"];
+      const labels = { deposit_rate: "ECB deposit rate", euribor_3m: "Euribor 3M", yield_10y: "10-year AAA yield" };
+      const c = card({ title: "Euro area interest rates", span: 12, note: "The euro area's policy and market rates (ECB).",
+        legend: order.map((s2, i) => ({ label: labels[s2], color: p.series[i] })) });
+      put("fx", "FX & rates", "Euro-area country: no exchange-rate exposure to the euro.", [{ card: c, draw: () => timeChart(c.chartEl, { xType: "time", yFormat: (v) => fmtRate(v, 1),
+        series: order.map((s2, i) => ({ name: labels[s2], color: p.series[i], data: rates.filter((r) => r.series_code === s2).map((r) => [r.date, r.rate_pct]) })) }) }],
+      [h("div", { class: "span-12 cc-more" }, exploreLink(ctx, "rates", "Live ECB rates and FX"))]);
+    },
+  };
+
+  await Promise.all(Object.entries(tasks).map(async ([id, fn]) => {
+    try { await fn(); } catch (e) {
+      console.error(id, e);
+      slots[id].replaceChildren(h("div", { class: "empty" }, `Could not load this section: ${e.message}`));
+    }
+  }));
 }
 
 // ------------------------------------------------------------------------ data

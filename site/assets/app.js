@@ -3,8 +3,10 @@ import { loadJSON, loadTable, fmtMonth } from "./util.js";
 import { disposeAll } from "./charts.js";
 import * as views from "./views.js";
 
-const TABS = ["overview", "markets", "country", "seasonality", "regions", "sources", "rentals", "air", "macro", "demand",
+const TABS = ["center", "markets", "seasonality", "regions", "sources", "rentals", "air", "macro", "demand",
   "weather", "rates", "spain", "data"];
+// Old links (#overview, #country) open the control center.
+const ALIASES = { overview: "center", country: "center" };
 const DEFAULT_GEO = "EU27_2020";
 
 const store = {
@@ -15,7 +17,8 @@ const store = {
 function readHash() {
   const [tab, query] = location.hash.replace(/^#/, "").split("?");
   const state = Object.fromEntries(new URLSearchParams(query || ""));
-  state.tab = TABS.includes(tab) ? tab : "overview";
+  const t = ALIASES[tab] || tab;
+  state.tab = TABS.includes(t) ? t : "center";
   return state;
 }
 
@@ -76,6 +79,7 @@ async function main() {
   };
 
   let renderId = 0;
+  let prevTab = null, prevGeo = null;
   async function render() {
     const id = ++renderId;
     const s = readHash();
@@ -92,6 +96,8 @@ async function main() {
     ctx.view = document.createElement("div");
     filtersEl.replaceChildren(ctx.filters);
     viewEl.replaceChildren(ctx.view);
+    if (prevTab !== s.tab || prevGeo !== s.geo) window.scrollTo({ top: 0 });
+    prevTab = s.tab; prevGeo = s.geo;
     try {
       await views[s.tab](ctx);
     } catch (e) {
@@ -102,7 +108,7 @@ async function main() {
 
   document.querySelectorAll(".tabs a").forEach((a) => a.addEventListener("click", (e) => {
     e.preventDefault();
-    const keep = { geo: ctx.state.geo };
+    const keep = { geo: ctx.state.geo, view: ctx.state.view };
     ctx.state = { tab: a.dataset.tab, ...keep };
     writeHash(ctx.state);
     render();

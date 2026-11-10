@@ -112,3 +112,14 @@ models:
               min_value: 10
               max_value: 1000
               config: {severity: error, warn_if: '>0', error_if: '>20'}
+
+  - name: mart_country_annual_history
+    description: >
+      Annual value and change for every monthly country series. kind: sum (change = % change),
+      index (% change of the annual average), rate01 / pct / level (change = difference of annual averages).
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, metric, year]}
+    columns:
+      - name: kind
+        tests:
+          - accepted_values: {values: [sum, index, rate01, pct, level]}

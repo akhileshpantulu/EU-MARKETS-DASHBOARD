@@ -12,7 +12,7 @@ clean-targets: ["target", "dbt_packages", "logs"]
 
 vars:
   # dim_date starts here; every monthly source is requested from this month.
-  first_month: "2015-01-01"
+  first_month: "2005-01-01"
   # Pre-pandemic reference year for "vs 2019" comparisons.
   baseline_year: 2019
 
