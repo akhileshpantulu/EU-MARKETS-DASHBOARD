@@ -57,6 +57,15 @@ export function fmtNum(v, digits = 1) {
   if (a >= 1e3) return `${(v / 1e3).toFixed(1)}k`;
   return v.toLocaleString("en-GB", { maximumFractionDigits: 2 });
 }
+/** Tooltip precision for large numbers: 4.15 M rather than 4 M, 231.6k rather than 232k. */
+export function fmtPrecise(v) {
+  if (!isNum(v)) return "n/a";
+  const a = Math.abs(v);
+  if (a >= 1e9) return `${(v / 1e9).toFixed(3)} bn`;
+  if (a >= 1e6) return `${(v / 1e6).toFixed(2)} M`;
+  if (a >= 1e4) return `${(v / 1e3).toFixed(1)}k`;
+  return Math.round(v).toLocaleString("en-GB");
+}
 export const fmtInt = (v) => (isNum(v) ? Math.round(v).toLocaleString("en-GB") : "n/a");
 export const fmtPct = (v, digits = 1) => (isNum(v) ? `${(v * 100).toFixed(digits)}%` : "n/a");
 export const fmtRate = (v, digits = 1) => (isNum(v) ? `${v.toFixed(digits)}%` : "n/a");

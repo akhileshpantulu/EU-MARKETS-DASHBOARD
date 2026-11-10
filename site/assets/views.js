@@ -1,7 +1,7 @@
 // One render function per tab. Each receives the shared context and fills
 // ctx.filters (one filter row scoping every chart below it) and ctx.view.
 import {
-  loadTable, loadJSON, groupBy, isNum, h, select, segmented, dataTable, fmtMonth, fmtNum, fmtInt, fmtPct,
+  loadTable, loadJSON, groupBy, isNum, h, select, segmented, dataTable, fmtMonth, fmtNum, fmtPrecise, fmtInt, fmtPct,
   fmtRate, fmtDec, fmtEur, fmtChange, deltaHTML, dateKeyToYm, monthName, downloadCSV, escapeHTML,
 } from "./util.js";
 import { card, timeChart, rankBars, heatmap, choropleth, bubbleMap, palette, empty, columnChart, legendHTML } from "./charts.js";
@@ -364,10 +364,10 @@ export async function air(ctx) {
   ctx.filters.append(select("Year", [{ value: "", label: "Latest" }, ...yearOpts.map((y) => ({ value: String(y), label: String(y) }))],
     year ? String(year) : "", (v) => ctx.setState({ year: v || null })));
   if (annualView) {
-    const items = hy.filter((r) => isNum(r.value)).map((r) => ({ label: r.is_ytd ? `${r.year} YTD` : String(r.year), value: r.value, muted: r.is_ytd, year: r.year }));
+    const items = hy.filter((r) => isNum(r.value)).map((r) => ({ label: r.is_ytd ? `${r.year} YTD` : String(r.year), value: r.value, change: r.change, muted: r.is_ytd, year: r.year }));
     c1 = card({ title: `Annual air passengers: ${ctx.geoName(g)}`, span: 7, note: "Passengers carried (arrivals plus departures) per year. The latest year is year to date.",
       table: () => ({ columns: ["Year", "Months", "Passengers", "Change"], rows: hy.map((r) => [r.is_ytd ? `${r.year} YTD` : r.year, r.months, r.value, r.change]) }) });
-    c1.draw = () => columnChart(c1.chartEl, { items, noCap: true, format: (v) => fmtNum(v, 0), colorFn: (d, pal) => (d.year === year ? pal.series[1] : pal.series[0]) });
+    c1.draw = () => columnChart(c1.chartEl, { items, noCap: true, changeFormat: (v) => fmtChange(v, { digits: 1 }), format: (v) => fmtNum(v, 0), colorFn: (d, pal) => (d.year === year ? pal.series[1] : pal.series[0]) });
     const ch = hy.filter((r) => isNum(r.change)).map((r) => ({ label: r.is_ytd ? `${r.year} YTD` : String(r.year), value: r.change, muted: r.is_ytd, year: r.year }));
     c2 = card({ title: "Change on the previous year", span: 5, note: "The latest year compares the same months." });
     c2.draw = () => columnChart(c2.chartEl, { items: ch, outline: year, format: (v) => fmtChange(v, { digits: 0 }), colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) });
@@ -437,11 +437,11 @@ async function airportView(ctx, a, airportsMonthly, annualView) {
 
   let c1, c2;
   if (annualView) {
-    const items = ann.map((r) => ({ label: r.is_ytd ? `${r.year} YTD` : String(r.year), value: r.passengers, muted: r.is_ytd, year: r.year }));
+    const items = ann.map((r) => ({ label: r.is_ytd ? `${r.year} YTD` : String(r.year), value: r.passengers, change: r.passengers_yoy, muted: r.is_ytd, year: r.year }));
     c1 = card({ title: `Annual passengers: ${name}`, span: 7,
       note: `Passengers carried per year since ${ann[0]?.year ?? "n/a"} (Eurostat avia_paoa). ${ann.at(-1)?.is_ytd ? `${ann.at(-1).year} is year to date (${ann.at(-1).months} months).` : ""}`,
       table: () => ({ columns: ["Year", "Months", "Passengers", "Change"], rows: ann.map((r) => [r.is_ytd ? `${r.year} YTD` : r.year, r.months, r.passengers, r.passengers_yoy]) }) });
-    c1.draw = () => columnChart(c1.chartEl, { items, noCap: true, format: (v) => fmtNum(v, 0), colorFn: (d, pal) => (d.year === year ? pal.series[1] : pal.series[0]) });
+    c1.draw = () => columnChart(c1.chartEl, { items, noCap: true, changeFormat: (v) => fmtChange(v, { digits: 1 }), format: (v) => fmtNum(v, 0), colorFn: (d, pal) => (d.year === year ? pal.series[1] : pal.series[0]) });
     const ch = ann.filter((r) => isNum(r.passengers_yoy)).map((r) => ({ label: r.is_ytd ? `${r.year} YTD` : String(r.year), value: r.passengers_yoy, muted: r.is_ytd, year: r.year }));
     c2 = card({ title: "Change on the previous year", span: 5, note: "The latest year compares the same months of the year before." });
     c2.draw = () => columnChart(c2.chartEl, { items: ch, outline: year, format: (v) => fmtChange(v, { digits: 0 }), colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) });
@@ -1081,6 +1081,10 @@ function paceChart(el, rows, key, { fmt, base, emptyMessage, year }) {
 const LEVEL_FMT = {
   sum: (v) => fmtNum(v, 1), index: (v) => fmtDec(v, 0), rate01: (v) => fmtPct(v, 0), pct: (v) => fmtRate(v, 1), level: (v) => fmtDec(v, 2),
 };
+// Hover shows more digits than the axis.
+const HOVER_FMT = {
+  sum: (v) => fmtPrecise(v), index: (v) => fmtDec(v, 1), rate01: (v) => fmtPct(v, 1), pct: (v) => fmtRate(v, 2), level: (v) => fmtDec(v, 3),
+};
 
 /**
  * One metric in the current view mode:
@@ -1097,14 +1101,16 @@ function metricCard(ctx, { title, note, rows, hist, key, metric, fmt, span = 4, 
   const want = Number(ctx.state.year) || null;
   const ytd = h_.find((r) => r.is_ytd);
   const ytdNote = ytd ? ` ${ytd.year} is year to date (${ytd.months} months).` : "";
+  const changeFmt = kind === "rate01" ? (v) => `${signed(v * 100, 1, "")} pts` : kind === "sum" || kind === "index" ? (v) => fmtChange(v, { digits: 1 })
+    : (v) => signed(v, Math.abs(v) < 1 ? 2 : 1);
   if (mode === "totals") {
     const items = h_.filter((r) => isNum(r.value)).map((r) => ({
-      label: r.is_ytd ? `${r.year} YTD` : String(r.year), value: r.value, muted: r.is_ytd, year: r.year }));
+      label: r.is_ytd ? `${r.year} YTD` : String(r.year), value: r.value, change: r.change, muted: r.is_ytd, year: r.year }));
     const c = card({ title, span,
       note: `${kind === "sum" ? "Annual total" : "Annual average"}.${ytdNote}${note ? ` ${note}` : ""}`,
       table: () => ({ columns: ["Year", "Months", kind === "sum" ? "Total" : "Average", "Change"],
         rows: h_.map((r) => [r.is_ytd ? `${r.year} YTD` : r.year, r.months, r.value, r.change]) }) });
-    return { card: c, draw: () => columnChart(c.chartEl, { items, emptyMessage, format: LEVEL_FMT[kind], noCap: true,
+    return { card: c, draw: () => columnChart(c.chartEl, { items, emptyMessage, format: LEVEL_FMT[kind], hoverFormat: HOVER_FMT[kind], noCap: true, changeFormat: changeFmt,
       colorFn: (d, pal) => (d.year === want ? pal.series[1] : pal.series[0]) }) };
   }
   if (mode === "annual") {
@@ -1419,10 +1425,10 @@ export async function center(ctx) {
         });
         let c1;
         if (mode === "totals") {
-          const lv = items.map((r) => ({ ...r, value: r.level }));
+          const lv = items.map((r) => ({ ...r, value: r.level, change: r.value }));
           c1 = card({ title: "Hotel revenue per guest night", span: 12, note: "Annual average, euros (Statistics Portugal, hotels and similar).",
             table: () => ({ columns: ["Year", "Revenue per night", "Change"], rows: items.map((r) => [r.label, r.level, r.value]) }) });
-          c1.draw = () => columnChart(c1.chartEl, { items: lv, format: fmtEur, noCap: true, colorFn: (d, pal) => (d.year === Number(ctx.state.year) ? pal.series[1] : pal.series[0]) });
+          c1.draw = () => columnChart(c1.chartEl, { items: lv, format: fmtEur, noCap: true, changeFormat: (v) => fmtChange(v, { digits: 1 }), colorFn: (d, pal) => (d.year === Number(ctx.state.year) ? pal.series[1] : pal.series[0]) });
         } else if (mode !== "pace") {
           c1 = card({ title: "Hotel revenue per guest night", span: 12, note: "Change on the previous year (Statistics Portugal, hotels and similar).",
             table: () => ({ columns: ["Year", "Revenue per night", "Change"], rows: items.map((r) => [r.label, r.level, r.value]) }) });
@@ -1461,12 +1467,12 @@ export async function center(ctx) {
         if (mode !== "pace") {
           const byYear = [...groupBy(rowsFx, (r) => r.month.slice(0, 4)).entries()].map(([y, l]) => ({ y, avg: l.reduce((a, r) => a + r.rate, 0) / l.length, n: l.length }));
           const items = mode === "totals"
-            ? byYear.map((r) => ({ label: r.n < 12 ? `${r.y} YTD` : r.y, value: r.avg, muted: r.n < 12, year: Number(r.y) }))
+            ? byYear.map((r, i) => ({ label: r.n < 12 ? `${r.y} YTD` : r.y, value: r.avg, muted: r.n < 12, year: Number(r.y), change: i ? r.avg / byYear[i - 1].avg - 1 : null }))
             : byYear.map((r, i) => ({ label: r.n < 12 ? `${r.y} YTD` : r.y, value: i ? r.avg / byYear[i - 1].avg - 1 : null, muted: r.n < 12 }));
           const c = card({ title: mode === "totals" ? `EUR/${cur}: annual average` : `EUR/${cur}: change in the annual average`, span: 12, note: "Positive = the euro bought more " + cur + " (the destination is cheaper for euro-area visitors).",
             table: () => ({ columns: ["Year", "Average", "Change"], rows: byYear.map((r, i) => [r.y, r.avg, items[i].value]) }) });
           made = { card: c, draw: () => (mode === "totals"
-            ? columnChart(c.chartEl, { items, noCap: true, format: (v) => fmtDec(v, v > 50 ? 1 : 3), colorFn: (d, pal) => (d.year === Number(ctx.state.year) ? pal.series[1] : pal.series[0]) })
+            ? columnChart(c.chartEl, { items, noCap: true, changeFormat: (v) => fmtChange(v, { digits: 1 }), format: (v) => fmtDec(v, v > 50 ? 1 : 3), colorFn: (d, pal) => (d.year === Number(ctx.state.year) ? pal.series[1] : pal.series[0]) })
             : columnChart(c.chartEl, { items: items.slice(1), format: (v) => fmtChange(v, { digits: 0 }), colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) })) };
         } else {
           made = metricCard(ctx, { title: `EUR/${cur}, monthly average`, rows: rowsFx, hist: [], key: "rate", fmt: (v) => fmtDec(v, v > 50 ? 1 : 3), span: 12 });

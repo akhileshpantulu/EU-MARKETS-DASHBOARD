@@ -1,6 +1,6 @@
 // Chart helpers on top of Apache ECharts. Every chart sits in a card with a
 // table view and a CSV download, so no value is reachable only by hovering.
-import { h, downloadCSV, isNum, escapeHTML } from "./util.js";
+import { h, downloadCSV, isNum, escapeHTML, fmtPrecise } from "./util.js";
 
 const instances = new Set();
 let resizeBound = false;
@@ -143,7 +143,7 @@ export function timeChart(el, { series, yFormat = (v) => v, yName, zoom = false,
     tooltip: {
       ...baseOption(p).tooltip, trigger: "axis",
       axisPointer: { type: "line", lineStyle: { color: p.axis } },
-      valueFormatter: (v) => (isNum(v) ? yFormat(v) : "n/a"),
+      valueFormatter: (v) => (isNum(v) ? tipFormat(yFormat)(v) : "n/a"),
     },
     xAxis: { type: xType, data: xs, boundaryGap: series.some((s) => s.type === "bar"), ...ax, splitLine: { show: false } },
     yAxis: { type: "value", name: yName, nameTextStyle: { color: p.muted, fontSize: 11 }, min: yMin, scale: yMin == null && !series.some((s) => s.type === "bar" || s.area),
@@ -180,14 +180,19 @@ export function timeChart(el, { series, yFormat = (v) => v, yName, zoom = false,
       return base;
     }),
   });
-  if (cap) {
-    // Tooltips show the true value of capped bars.
-    chart.setOption({ tooltip: { valueFormatter: undefined, formatter: (xs) => [escapeHTML(String(xs[0]?.axisValueLabel ?? xs[0]?.name ?? "")),
-      ...xs.map((x) => { const v = x.data?.rawValue ?? (Array.isArray(x.value) ? x.value[1] : x.value); return `${x.marker}${escapeHTML(x.seriesName)} <b>${isNum(v) ? yFormat(v) : "n/a"}</b>`; })].join("<br>") } });
+  if (cap || xFormat) {
+    // Header in the axis format (month names, not "06"); capped bars show their true value.
+    chart.setOption({ tooltip: { valueFormatter: undefined, formatter: (xs) => [escapeHTML(String(xFormat && xs[0] ? xFormat(xs[0].axisValue) : xs[0]?.axisValueLabel ?? xs[0]?.name ?? "")),
+      ...xs.map((x) => { const v = x.data?.rawValue ?? (Array.isArray(x.value) ? x.value[1] : x.value); return `${x.marker}${escapeHTML(x.seriesName)} <b>${isNum(v) ? tipFormat(yFormat)(v) : "n/a"}</b>`; })].join("<br>") } });
   }
   el.nextElementSibling?.classList.contains("cap-note") && el.nextElementSibling.remove();
   if (cap) el.after(h("p", { class: "cap-note" }, `Axis capped at ±${yFormat(cap).replace(/^[+−-]/, "")}; bars beyond it are labelled with their value.`));
   return chart;
+}
+
+/** Hover format: abbreviated counts (k / M / bn) get more digits so close years differ. */
+function tipFormat(format) {
+  return (v) => { const s = format(v); return isNum(v) && /\d ?(k|M|bn)$/.test(s) ? fmtPrecise(v) : s; };
 }
 
 /** A round axis limit when a few values (2020-22) dwarf the rest, else null. */
@@ -216,7 +221,7 @@ export function rankBars(el, { items, format = (v) => v, onClick, colorFn }) {
   chart.setOption({
     ...baseOption(p),
     grid: { left: 8, right: 56, top: 8, bottom: 8, containLabel: true },
-    tooltip: { ...baseOption(p).tooltip, trigger: "item", formatter: (x) => `${escapeHTML(x.name)}<br><b>${format(x.value)}</b>` },
+    tooltip: { ...baseOption(p).tooltip, trigger: "item", formatter: (x) => `${escapeHTML(x.name)}<br><b>${tipFormat(format)(x.value)}</b>` },
     xAxis: { type: "value", ...ax, axisLabel: { ...ax.axisLabel, formatter: (v) => format(v) } },
     yAxis: { type: "category", data: data.map((d) => d.label), ...ax, axisLine: { show: false }, axisLabel: { color: p.text2, fontSize: 12 } },
     series: [{
@@ -242,7 +247,7 @@ export function heatmap(el, { rows, cols, values, format = (v) => v, min, max })
   chart.setOption({
     ...baseOption(p),
     grid: { left: 8, right: 16, top: 8, bottom: 52, containLabel: true },
-    tooltip: { ...baseOption(p).tooltip, formatter: (x) => `${escapeHTML(rows[x.value[1]])}, ${cols[x.value[0]]}<br><b>${format(x.value[2])}</b>` },
+    tooltip: { ...baseOption(p).tooltip, formatter: (x) => `${escapeHTML(rows[x.value[1]])}, ${cols[x.value[0]]}<br><b>${tipFormat(format)(x.value[2])}</b>` },
     xAxis: { type: "category", data: cols, axisLabel: { color: p.muted }, axisLine: { show: false }, axisTick: { show: false }, splitArea: { show: false } },
     yAxis: { type: "category", data: rows, inverse: true, axisLabel: { color: p.text2 }, axisLine: { show: false }, axisTick: { show: false } },
     visualMap: { min: min ?? Math.min(...vals), max: max ?? Math.max(...vals), calculable: false, orient: "horizontal", left: "center", bottom: 0,
@@ -300,7 +305,7 @@ export function choropleth(el, { name, geojson, data, scale = "seq", format = (v
     tooltip: { ...baseOption(p).tooltip, trigger: "item", formatter: (x) => {
       if (tooltipHTML) return tooltipHTML(x.name, x.value);
       const label = labelFor ? labelFor(x.name) : names.get(x.name) || x.name;
-      return `${escapeHTML(label)}<br><b>${isNum(x.value) ? format(x.value) : "no data"}</b>`;
+      return `${escapeHTML(label)}<br><b>${isNum(x.value) ? tipFormat(format)(x.value) : "no data"}</b>`;
     } },
     visualMap: { show: false, type: "continuous", min, max, inRange: { color: scale === "div" ? p.div : p.seq } },
     series: [{
@@ -334,7 +339,7 @@ export function bubbleMap(el, { geojson, points, format = (v) => v }) {
   const max = Math.max(...points.map((d) => d.value));
   chart.setOption({
     ...baseOption(p),
-    tooltip: { ...baseOption(p).tooltip, trigger: "item", formatter: (x) => `${escapeHTML(x.name)}<br><b>${format(x.value[2])}</b>` },
+    tooltip: { ...baseOption(p).tooltip, trigger: "item", formatter: (x) => `${escapeHTML(x.name)}<br><b>${tipFormat(format)(x.value[2])}</b>` },
     geo: { map: "countries", roam: true, aspectScale: 0.68, layoutCenter: ["50%", "52%"], layoutSize: "118%", center: [12, 50],
       itemStyle: { areaColor: p.mapEmpty, borderColor: p.mapBorder, borderWidth: 0.6 }, emphasis: { disabled: true }, silent: true },
     series: [{ type: "scatter", coordinateSystem: "geo",
@@ -357,7 +362,7 @@ export function scaleGradient(kind) {
  * (colorFn) so the sign or a highlighted year can carry polarity.
  * items: [{label, value, muted?}]
  */
-export function columnChart(el, { items, format = (v) => v, colorFn, emptyMessage, noCap = false, outline = null }) {
+export function columnChart(el, { items, format = (v) => v, colorFn, emptyMessage, noCap = false, outline = null, changeFormat = null, hoverFormat = null }) {
   if (!items.some((d) => isNum(d.value))) return empty(el, emptyMessage);
   const p = palette();
   const chart = init(el);
@@ -374,7 +379,13 @@ export function columnChart(el, { items, format = (v) => v, colorFn, emptyMessag
     ...baseOption(p),
     grid: { left: 8, right: 16, top: 24, bottom: 8, containLabel: true },
     tooltip: { ...baseOption(p).tooltip, trigger: "axis", axisPointer: { type: "shadow", shadowStyle: { color: "rgba(127,127,127,0.08)" } },
-      formatter: (xs) => { const d = items[xs[0].dataIndex]; return `${escapeHTML(d.label)}<br><b>${isNum(d.value) ? format(d.value) : "n/a"}</b>`; } },
+      formatter: (xs) => {
+        const d = items[xs[0].dataIndex];
+        // Level charts can carry each year's change (items[].change); the YTD bar's change is on the same months.
+        const ch = changeFormat && isNum(d.change)
+          ? `<br><span style="color:${d.change >= 0 ? p.div[4] : p.div[0]}">${changeFormat(d.change)}</span> vs ${d.muted ? "same months last year" : "previous year"}` : "";
+        return `${escapeHTML(d.label)}<br><b>${isNum(d.value) ? (hoverFormat || tipFormat(format))(d.value) : "n/a"}</b>${ch}`;
+      } },
     xAxis: { type: "category", data: items.map((d) => d.label), ...ax, splitLine: { show: false },
       axisLabel: { ...ax.axisLabel, interval: "auto", hideOverlap: true } },
     yAxis: { type: "value", ...ax, axisLine: { show: false }, axisLabel: { ...ax.axisLabel, formatter: (v) => format(v) },
