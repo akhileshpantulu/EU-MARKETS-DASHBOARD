@@ -33,6 +33,9 @@ models:
 
   - name: mart_country_scorecard
     columns:
+      - name: is_current
+        description: Latest month of nights is within twelve months of the newest month any market has.
+        tests: [not_null]
       - name: geo_code
         tests: [unique, not_null]
 

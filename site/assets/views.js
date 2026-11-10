@@ -98,7 +98,7 @@ export async function overview(ctx) {
   const m = metrics[metric];
   const annualYear = latestComplete(annual.filter((r) => ctx.isCountry(r.geo_code)));
   const mapData = m.src === "score"
-    ? score.filter((r) => ctx.isCountry(r.geo_code)).map((r) => ({ code: r.geo_code, value: m.get(r) }))
+    ? score.filter((r) => ctx.isCountry(r.geo_code) && r.is_current).map((r) => ({ code: r.geo_code, value: m.get(r) }))
     : annual.filter((r) => r.year === annualYear && ctx.isCountry(r.geo_code)).map((r) => ({ code: r.geo_code, value: m.get(r) }));
   const mapCard = card({
     title: `Countries: ${m.label}`, span: 5, height: "map",
@@ -106,9 +106,10 @@ export async function overview(ctx) {
     table: () => ({ columns: ["Country", m.label], rows: mapData.map((d) => [ctx.geoName(d.code), d.value]) }),
   });
 
-  const movers = score.filter((r) => ctx.isCountry(r.geo_code) && isNum(r.nights_ytd_yoy));
+  const movers = score.filter((r) => ctx.isCountry(r.geo_code) && r.is_current && isNum(r.nights_ytd_yoy));
+  const stale = score.filter((r) => ctx.isCountry(r.geo_code) && !r.is_current).map((r) => `${ctx.geoName(r.geo_code)} (to ${fmtMonth(dateKeyToYm(r.nights_date_key))})`);
   const moversCard = card({ title: "Year-to-date growth by country", span: 12,
-    note: "Nights year to date versus the same months last year. The selected market is highlighted." });
+    note: `Nights year to date versus the same months last year. The selected market is highlighted.${stale.length ? ` Not shown, no recent data: ${stale.join(", ")}.` : ""}` });
 
   ctx.view.append(
     liveNote,
@@ -132,7 +133,7 @@ export async function overview(ctx) {
   rankBars(moversCard.chartEl, {
     items: movers.sort((a, b) => b.nights_ytd_yoy - a.nights_ytd_yoy).map((r) => ({ label: ctx.geoName(r.geo_code), value: r.nights_ytd_yoy, code: r.geo_code })),
     format: (v) => fmtChange(v),
-    colorFn: (d, pal) => (d.code === g ? pal.series[1] : pal.series[0]),
+    colorFn: (d, pal) => (d.code === g ? pal.series[1] : d.value >= 0 ? pal.div[4] : pal.div[0]),
     onClick: (d) => ctx.setState({ geo: d.code }),
   });
 }
@@ -151,6 +152,7 @@ export async function markets(ctx) {
     if (!g) return false;
     if (group === "aggregates") return g.geo_level === "aggregate";
     if (g.geo_level !== "country") return false;
+    if (!r.is_current && group !== "all") return false;
     if (group === "eu") return g.is_eu27;
     if (group === "euro") return g.is_euro_area;
     if (group === "south") return g.region_group === "Southern Europe";
@@ -160,7 +162,7 @@ export async function markets(ctx) {
   const base = ctx.meta.baseline_year;
   const cols = [
     { key: "name", label: "Market", text: true },
-    { key: "nights_date_key", label: "Latest", fmt: (v) => fmtMonth(dateKeyToYm(v)) },
+    { key: "nights_date_key", label: "Latest", fmt: (v, r) => `${fmtMonth(dateKeyToYm(v))}${r.is_current ? "" : " (stale)"}` },
     { key: "latest_nights", label: "Nights", fmt: (v) => fmtNum(v) },
     { key: "latest_nights_yoy", label: "YoY", fmt: (v) => deltaHTML(v) },
     { key: "nights_ytd_yoy", label: "YTD YoY", fmt: (v) => deltaHTML(v) },
@@ -624,11 +626,13 @@ export async function spain(ctx) {
   ];
   const list = byZone.get(zone) || [];
   const p = palette();
-  const c1 = card({ title: `ADR and RevPAR: ${zname(zone)}`, span: 7, note: "Euros per room-night. RevPAR ÷ ADR gives room occupancy.",
+  const c1 = card({ title: `ADR and RevPAR: ${zname(zone)}`, span: 7, height: "tall", note: "Euros per room-night. RevPAR ÷ ADR gives room occupancy.",
     legend: [{ label: "ADR", color: p.series[0] }, { label: "RevPAR", color: p.series[1] }],
     table: () => ({ columns: ["Month", "ADR", "RevPAR", "Occupancy"], rows: list.map((r) => [r.month, r.adr_eur, r.revpar_eur, r.implied_room_occupancy_rate]) }) });
-  const ranked = summary.filter((r) => r.month === latest && isNum(r.adr_yoy)).sort((a, b) => b.adr_yoy - a.adr_yoy);
-  const c2 = card({ title: `ADR change on a year earlier, ${fmtMonth(latest)}`, span: 5, note: "Zones with data for the latest month." });
+  const allRanked = summary.filter((r) => r.month === latest && isNum(r.adr_yoy)).sort((a, b) => b.adr_yoy - a.adr_yoy);
+  const ranked = allRanked.length > 20 ? [...allRanked.slice(0, 12), ...allRanked.slice(-6)] : allRanked;
+  const c2 = card({ title: `ADR change on a year earlier, ${fmtMonth(latest)}`, span: 5,
+    note: allRanked.length > 20 ? `Top 12 and bottom 6 of ${allRanked.length} zones; all zones in the table below.` : "Zones with data for the latest month." });
   const c3 = card({ title: "Hotel prices by Spanish tourist zone", span: 12, csvName: "spain-zones",
     note: "INE Hotel Sector Profitability Indicators (IRSH). Eurostat publishes no hotel prices, so Spain is the price layer. Latest months are provisional.",
     table: () => ({ columns: cols.map((c) => c.label), rows: summary.map((r) => cols.map((c) => r[c.key])) }) });

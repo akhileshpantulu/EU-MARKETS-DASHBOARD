@@ -13,6 +13,11 @@ latest as (
     from m group by geo_code
 ),
 
+frontier as (
+    -- Newest month any country has published.
+    select max(nights_date_key) as max_key from latest
+),
+
 ytd as (
     select
         l.geo_code,
@@ -29,6 +34,9 @@ ytd as (
 select
     g.geo_code, g.geo_name, g.geo_level, g.is_eu27, g.is_euro_area, g.region_group,
     l.nights_date_key,
+    -- False for markets that stopped reporting (the UK after 2020) or lag over a year:
+    -- their "latest" growth rates describe a different period.
+    coalesce(l.nights_date_key >= f.max_key - 100, false) as is_current,
     n.nights as latest_nights,
     n.nights_yoy as latest_nights_yoy,
     n.nights_vs_baseline as latest_nights_vs_baseline,
@@ -54,6 +62,7 @@ select
     u.unemployment_rate_pct as latest_unemployment_rate_pct
 from {{ ref('dim_geo') }} as g
 join latest as l using (geo_code)
+cross join frontier as f
 left join ytd as y using (geo_code)
 left join m as n on n.geo_code = l.geo_code and n.date_key = l.nights_date_key
 left join m as o on o.geo_code = l.geo_code and o.date_key = l.occupancy_date_key

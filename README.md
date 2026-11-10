@@ -14,7 +14,7 @@ Portal and INE), modelled with **DuckDB + dbt**, refreshed daily by **GitHub Act
 published as a static **GitHub Pages** site. No server: the site is HTML, JavaScript and
 JSON files.
 
-Live site (after the first deploy): `https://<owner>.github.io/EU-MARKETS-DASHBOARD/`
+**Live site:** https://akhileshpantulu.github.io/EU-MARKETS-DASHBOARD/ (once GitHub Pages is enabled, see [Deploy](#deploy-to-github-pages))
 
 Modelled on [carlosalomar/balearic-tourism-dw](https://github.com/carlosalomar/balearic-tourism-dw)
 (Balearic Islands, Streamlit). This version widens the scope from three islands to every
