@@ -120,7 +120,41 @@ def inept():
         print("DATA (latest period)", data.status_code, data.text[:1500], flush=True)
 
 
-SECTIONS = {"eurostat": eurostat, "routes": routes, "oecd": oecd, "openmeteo": openmeteo, "inept": inept}
+def inept_catalog():
+    head("INE.pt catalogue search")
+    for url in ["https://www.ine.pt/ine/xml_indic.jsp?opc=3&lang=EN",
+                "https://www.ine.pt/ine/xml_indic.jsp?opc=1&lang=EN"]:
+        try:
+            r = S.get(url, timeout=180)
+        except Exception as exc:  # noqa: BLE001
+            print(url, "error", exc, flush=True); continue
+        print(url, r.status_code, len(r.content), r.headers.get("content-type"), flush=True)
+        text = r.text
+        print(" head:", text[:600].replace("\n", " "), flush=True)
+        for m in re.finditer(r"(?i)revpar|average daily rate|per available room|per occupied room|bed[- ]places? occupancy", text):
+            start = max(0, m.start() - 700)
+            print("  ...", text[start:m.end() + 300].replace("\n", " "), flush=True)
+            print("-----", flush=True)
+        if "RevPAR" in text or "revpar" in text.lower():
+            break
+    meta_url = "https://www.ine.pt/ine/json_indicador/pindicaMeta.jsp"
+    for code in ["0012091", "0012092"]:
+        m = S.get(meta_url, params={"varcd": code, "lang": "EN"}, timeout=60).json()
+        m0 = m[0] if isinstance(m, list) else m
+        dims = m0.get("Dimensoes", {})
+        print("\nMETA", code, m0.get("IndicadorNome"), m0.get("PrimeiroPeriodo"), m0.get("UltimoPeriodo"), m0.get("UnidadeMedida"))
+        print(" dims:", json.dumps(dims.get("Descricao_Dim"), ensure_ascii=False))
+        cats = dims.get("Categoria_Dim", [{}])[0]
+        for key in list(cats)[-40:]:
+            if not key.startswith("Dim_Num1"):
+                print("  ", key, json.dumps(cats[key], ensure_ascii=False)[:200])
+        last = [k for k in cats if k.startswith("Dim_Num1")][-1].split("_")[-1]
+        data = S.get("https://www.ine.pt/ine/json_indicador/pindica.jsp",
+                     params={"op": "2", "varcd": code, "Dim1": last, "lang": "EN"}, timeout=60)
+        print(" DATA", last, data.status_code, data.text[:1800], flush=True)
+
+
+SECTIONS = {"eurostat": eurostat, "routes": routes, "oecd": oecd, "openmeteo": openmeteo, "inept": inept, "inept_catalog": inept_catalog}
 
 if __name__ == "__main__":
     for name in sys.argv[1:] or SECTIONS:
