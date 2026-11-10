@@ -12,10 +12,30 @@ last_of as (
     from m group by market_code
 ),
 
+-- Readings more than a year behind the newest one any market has are dropped
+-- (Eurostat stopped UK series after 2020; a 2020 value is not a current signal).
+frontier as (
+    select max(cli_key) as cli_max, max(cci_key) as cci_max, max(ec_key) as ec_max,
+           max(retail_key) as retail_max, max(unemp_key) as unemp_max
+    from last_of
+),
+
+current_keys as (
+    select
+        l.market_code,
+        case when l.cli_key >= f.cli_max - 100 then l.cli_key end as cli_key,
+        case when l.cci_key >= f.cci_max - 100 then l.cci_key end as cci_key,
+        case when l.ec_key >= f.ec_max - 100 then l.ec_key end as ec_key,
+        case when l.retail_key >= f.retail_max - 100 then l.retail_key end as retail_key,
+        case when l.unemp_key >= f.unemp_max - 100 then l.unemp_key end as unemp_key
+    from last_of as l cross join frontier as f
+),
+
 hpi as (
     select market_code, arg_max(house_prices_yoy_pct, quarter_start) as house_prices_yoy_pct,
            max(quarter_start) as house_prices_quarter
     from {{ ref('fact_house_prices_quarterly') }} group by market_code
+    having max(quarter_start) >= (select max(quarter_start) from {{ ref('fact_house_prices_quarterly') }}) - interval 1 year
 ),
 
 travel as (
@@ -25,6 +45,7 @@ travel as (
     from {{ ref('fact_resident_travel_annual') }} as t
     left join {{ ref('fact_resident_travel_annual') }} as p on p.market_code = t.market_code and p.year = t.year - 1
     where t.trips_abroad is not null
+      and t.year >= (select max(year) - 1 from {{ ref('fact_resident_travel_annual') }} where trips_abroad is not null)
     qualify row_number() over (partition by t.market_code order by t.year desc) = 1
 )
 
@@ -39,7 +60,7 @@ select
     t.travel_year, t.trips_abroad, t.trips_abroad_yoy, t.spend_abroad_eur, t.spend_abroad_yoy,
     t.spend_per_night_abroad_eur
 from {{ ref('dim_market') }} as dm
-left join last_of as l using (market_code)
+left join current_keys as l using (market_code)
 left join m as c on c.market_code = dm.market_code and c.date_key = l.cli_key
 left join m as cc on cc.market_code = dm.market_code and cc.date_key = l.cci_key
 left join m as ec on ec.market_code = dm.market_code and ec.date_key = l.ec_key

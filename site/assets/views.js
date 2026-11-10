@@ -776,7 +776,12 @@ export async function demand(ctx) {
     return { code: r.partner_code, name: marketName(r.partner_code), share: r.share_of_foreign_nights, nights_yoy: r.nights_yoy, ...s,
       fx_12m: s.currency_code && s.currency_code !== "EUR" ? fx12(s.currency_code) : null };
   });
-  const arrow = (v, good = 0) => (isNum(v) ? `<span class="delta ${v > good ? "up" : v < good ? "down" : "flat"}">${v > good ? "▲" : v < good ? "▼" : "■"} ${v > 0 ? "+" : ""}${v.toFixed(1)}</span>` : "n/a");
+  const arrow = (v) => {
+    if (!isNum(v)) return "n/a";
+    const r = Number(v.toFixed(1));
+    const dir = r > 0 ? "up" : r < 0 ? "down" : "flat";
+    return `<span class="delta ${dir}">${{ up: "▲", down: "▼", flat: "■" }[dir]} ${signed(r, 1)}</span>`;
+  };
   const cols = [
     { key: "name", label: "Market", text: true },
     { key: "share", label: `Share ${smYear}`, fmt: (v) => fmtPct(v, 1) },
