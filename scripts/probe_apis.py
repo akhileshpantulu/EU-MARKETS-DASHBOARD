@@ -154,7 +154,18 @@ def inept_catalog():
         print(" DATA", last, data.status_code, data.text[:1800], flush=True)
 
 
-SECTIONS = {"eurostat": eurostat, "routes": routes, "oecd": oecd, "openmeteo": openmeteo, "inept": inept, "inept_catalog": inept_catalog}
+def gdelt():
+    head("GDELT DOC 2.0 news API")
+    url = "https://api.gdeltproject.org/api/v2/doc/doc"
+    for q in ['(tourism OR hotel OR hotels OR tourists) Spain sourcelang:english',
+              '(tourism OR "hotel occupancy" OR "tourist arrivals") (Europe OR EU) sourcelang:english']:
+        r = S.get(url, params={"query": q, "mode": "artlist", "format": "json", "maxrecords": "5", "timespan": "3d",
+                               "sort": "datedesc"}, headers={"Origin": "https://example.github.io"}, timeout=60)
+        print(q, "->", r.status_code, "ACAO:", r.headers.get("Access-Control-Allow-Origin"), r.headers.get("content-type"))
+        print(r.text[:1200], flush=True)
+
+
+SECTIONS = {"eurostat": eurostat, "routes": routes, "oecd": oecd, "openmeteo": openmeteo, "inept": inept, "inept_catalog": inept_catalog, "gdelt": gdelt}
 
 if __name__ == "__main__":
     for name in sys.argv[1:] or SECTIONS:
