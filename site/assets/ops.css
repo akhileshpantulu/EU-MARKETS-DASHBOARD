@@ -10,7 +10,7 @@
   --map-border: #c9cfd6;
   --map-empty: #e4e8ec;
   --bracket: #9aa6b2;
-  --ticker-h: 34px;
+  --ticker-h: 0px;
   --cmd-h: 46px;
   --page: #eef1f4;
   --surface: #fbfcfd;
@@ -80,7 +80,7 @@ body {
 }
 .cmd-logo::after {
   content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--signal);
-  animation: pulse 2.4s ease-in-out infinite;
+
 }
 .cmd-name { font-family: var(--mono); font-weight: 600; letter-spacing: 0.08em; font-size: 14px; }
 .cmd-slash { color: var(--signal); margin: 0 1px; }
@@ -310,3 +310,8 @@ body[data-tab="home"] .site-footer { display: none; }
   .map-hud .scale-legend .muted { display: none; }
   .segmented button { flex: 1 1 auto; }
 }
+
+.sit.two { grid-template-columns: minmax(0, 1fr) 360px; }
+.map-layer { display: flex; gap: 10px; align-items: flex-end; }
+.map-layer .field select { min-width: 90px; }
+@media (max-width: 1180px) { .sit.two { grid-template-columns: 1fr; } .sit.two > .panel.map-panel { height: 560px; } }

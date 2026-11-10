@@ -325,7 +325,7 @@ export function scaleGradient(kind) {
  * (colorFn) so the sign or a highlighted year can carry polarity.
  * items: [{label, value, muted?}]
  */
-export function columnChart(el, { items, format = (v) => v, colorFn, emptyMessage }) {
+export function columnChart(el, { items, format = (v) => v, colorFn, emptyMessage, noCap = false, outline = null }) {
   if (!items.some((d) => isNum(d.value))) return empty(el, emptyMessage);
   const p = palette();
   const chart = init(el);
@@ -335,7 +335,7 @@ export function columnChart(el, { items, format = (v) => v, colorFn, emptyMessag
   const abs = items.map((d) => Math.abs(d.value)).filter(isNum).sort((a, b) => a - b);
   const typical = abs[Math.floor(abs.length * 0.75)] || 0;
   const nice = (x) => { const e = 10 ** Math.floor(Math.log10(x)); const f = x / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e; };
-  const cap = abs.length >= 6 && typical > 0 && abs.at(-1) > 3 * typical ? nice(typical * 2.2) : null;
+  const cap = !noCap && abs.length >= 6 && typical > 0 && abs.at(-1) > 3 * typical ? nice(typical * 2.2) : null;
   const shown = (v) => (cap && isNum(v) ? Math.max(-cap, Math.min(cap, v)) : v);
   const capped = (v) => cap && isNum(v) && Math.abs(v) > cap;
   // Within a run of capped bars, every second one is offset.
@@ -354,6 +354,7 @@ export function columnChart(el, { items, format = (v) => v, colorFn, emptyMessag
       data: items.map((d, i) => ({
         value: isNum(d.value) ? shown(d.value) : null,
         itemStyle: { color: colorFn ? colorFn(d, p) : p.series[0], opacity: d.muted ? 0.55 : 1,
+          ...(outline != null && d.year === outline ? { borderColor: p.text, borderWidth: 1.5 } : {}),
           borderRadius: (d.value ?? 0) >= 0 ? [3, 3, 0, 0] : [0, 0, 3, 3] },
         label: capped(d.value) ? { show: true, position: d.value >= 0 ? "insideTop" : "insideBottom", color: p.text, fontSize: 10.5,
           fontWeight: 600, backgroundColor: p.surface, borderColor: p.grid, borderWidth: 1, borderRadius: 3, padding: [1, 3],

@@ -1,6 +1,5 @@
 // App shell: loads metadata, keeps the state in the URL hash and renders the active tab.
-import { loadJSON, loadTable, fmtMonth, fmtNum, fmtChange, escapeHTML, groupBy } from "./util.js";
-import { liveFx, liveRates, mergeRows } from "./live.js";
+import { loadJSON, loadTable, fmtMonth } from "./util.js";
 import { disposeAll } from "./charts.js";
 import * as views from "./views.js";
 
@@ -49,16 +48,9 @@ async function main() {
   const latest = score.find((r) => r.geo_code === "EU27_2020")?.nights_date_key || Math.max(0, ...score.map((r) => r.nights_date_key || 0));
   const problems = meta.sources.filter((s) => s.status !== "ok").length;
   document.getElementById("freshness").innerHTML =
-    `BUILD ${meta.generated_at.slice(0, 16).replace("T", " ")}Z · EU NIGHTS → ${fmtMonth(String(latest)).toUpperCase()}` +
-    (problems ? ` · <a href="#data">${problems} SOURCE${problems > 1 ? "S" : ""} DEGRADED</a>` : "");
-  document.getElementById("status-lights").replaceChildren(...meta.sources.map((src) => {
-    const i = document.createElement("i");
-    i.className = src.status;
-    i.title = `${src.source_key}: ${src.status}${src.latest_period ? ` · data to ${src.latest_period}` : ""}`;
-    return i;
-  }));
-  startClock();
-  startTicker(meta, score);
+    `Data refreshed ${meta.generated_at.slice(0, 10)} · EU nights to ${fmtMonth(String(latest))} · ` +
+    (problems ? `<a href="#data">${problems} of ${meta.sources.length} sources need attention</a>` : `${meta.sources.length} sources OK`);
+  // (no clock or ticker: the data is monthly; the header states how fresh it is)
 
   const ctx = {
     meta,
@@ -82,6 +74,7 @@ async function main() {
       if (patch.geo) store.set("geo", patch.geo);
       if ("geo" in patch && !("region" in patch)) delete ctx.state.region;
       if ("geo" in patch && !("airport" in patch)) delete ctx.state.airport;
+      if ("airport" in patch) delete ctx.state.ryear;
       writeHash(ctx.state);
       render();
     },
@@ -140,50 +133,6 @@ async function main() {
   });
 
   render();
-}
-
-function startClock() {
-  const el = document.getElementById("utc-clock");
-  const tick = () => { el.textContent = `${new Date().toISOString().slice(0, 19).replace("T", " ")} UTC`; };
-  tick();
-  setInterval(tick, 1000);
-}
-
-/** Bottom ticker: ECB rates and FX (live when the ECB answers), EU headline numbers. */
-async function startTicker(meta, score) {
-  const bar = document.getElementById("ticker");
-  const track = bar.querySelector(".ticker-track");
-  const [ratesSnap, fxSnap] = await Promise.all([loadTable("rates"), loadTable("fx_daily")]);
-  const eu = score.find((r) => r.geo_code === "EU27_2020") || {};
-  const cls = (v) => (v > 0.0005 ? "up" : v < -0.0005 ? "down" : "");
-  const draw = (rates, fx, live) => {
-    const items = [];
-    const rs = groupBy(rates, "series_code");
-    const label = { deposit_rate: "ECB DFR", estr: "€STR", euribor_3m: "EURIBOR 3M", yield_10y: "AAA 10Y" };
-    for (const k of ["deposit_rate", "estr", "euribor_3m", "yield_10y"]) {
-      const l = rs.get(k);
-      if (l?.length) items.push(`<span class="ticker-item"><span class="k">${label[k]}</span><b>${l.at(-1).rate_pct.toFixed(2)}%</b></span>`);
-    }
-    const fxs = groupBy(fx, "currency_code");
-    for (const c of ["USD", "GBP", "CHF", "SEK", "NOK", "PLN", "JPY", "TRY"]) {
-      const l = fxs.get(c);
-      if (!l || l.length < 2) continue;
-      const a = l.at(-1).units_per_eur, b = l.at(-2).units_per_eur, ch = a / b - 1;
-      items.push(`<span class="ticker-item"><span class="k">EUR/${c}</span><b>${a.toFixed(a > 50 ? 2 : 4)}</b><span class="${cls(ch)}">${fmtChange(ch, { digits: 2 })}</span></span>`);
-    }
-    if (eu.latest_nights) items.push(`<span class="ticker-item"><span class="k">EU NIGHTS ${fmtMonth(String(eu.nights_date_key)).toUpperCase()}</span><b>${fmtNum(eu.latest_nights)}</b><span class="${cls(eu.latest_nights_yoy)}">${fmtChange(eu.latest_nights_yoy)}</span></span>`);
-    if (eu.latest_air_passengers) items.push(`<span class="ticker-item"><span class="k">EU AIR PAX</span><b>${fmtNum(eu.latest_air_passengers)}</b><span class="${cls(eu.latest_air_passengers_yoy)}">${fmtChange(eu.latest_air_passengers_yoy)}</span></span>`);
-    if (eu.latest_hicp_accommodation_pct != null) items.push(`<span class="ticker-item"><span class="k">EU ACCOM CPI</span><b>${eu.latest_hicp_accommodation_pct.toFixed(1)}%</b></span>`);
-    const html = items.join("");
-    track.innerHTML = html + html;   // duplicated for a seamless loop
-    bar.querySelector(".ticker-label").innerHTML = live ? "● LIVE" : "SNAPSHOT";
-    bar.hidden = false;
-  };
-  draw(ratesSnap, fxSnap, false);
-  const currencies = meta.currencies.map((c) => c.currency_code);
-  const [lf, lr] = await Promise.allSettled([liveFx(currencies), liveRates()]);
-  const fxOk = lf.status === "fulfilled" && lf.value.length, rtOk = lr.status === "fulfilled" && lr.value.length;
-  if (fxOk || rtOk) draw(rtOk ? mergeRows(ratesSnap, lr.value, "series_code") : ratesSnap, fxOk ? mergeRows(fxSnap, lf.value, "currency_code") : fxSnap, true);
 }
 
 function start() {

@@ -68,6 +68,11 @@ TABLES = {
         from core.fact_airport_passengers_monthly as f join core.dim_date as d using (date_key)
         where d.year >= 2019 and f.airport_code in ({AIRPORTS_SHOWN})
         order by 1, 2""",
+    "airport_annual": f"""
+        select airport_code, year, months, is_ytd, passengers, passengers_yoy
+        from analytics.mart_airport_annual
+        where airport_code in ({AIRPORTS_SHOWN})
+        order by airport_code, year""",
     "airport_summary": f"""
         select airport_code, iata_code, airport_name, city, country_code, country_name, latitude, longitude,
                is_curated, strftime(last_month, '%Y-%m') as last_month, passengers_last_month, last_month_yoy,

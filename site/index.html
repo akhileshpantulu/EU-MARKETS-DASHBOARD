@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>EU Markets Ops</title>
+  <title>EU Markets</title>
   <meta name="description" content="Operations console for European tourism and hotel markets: demand, occupancy, seasonality, source markets, short-stay rentals, air traffic, prices, weather and the macro backdrop, from Eurostat, the ECB, the OECD, Open-Meteo, INE and Statistics Portugal open data.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='4' fill='%230b1016'/><circle cx='16' cy='16' r='9' fill='none' stroke='%2336c5d6' stroke-width='2'/><circle cx='16' cy='16' r='3' fill='%2336c5d6'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -20,15 +20,13 @@
 </head>
 <body>
   <header class="cmdbar">
-    <a class="cmd-brand" href="#home" data-tab="home" aria-label="EU Markets Ops, situation map">
+    <a class="cmd-brand" href="#home" data-tab="home" aria-label="EU Markets, overview">
       <span class="cmd-logo" aria-hidden="true"></span>
-      <span class="cmd-name">EUMKT<span class="cmd-slash">/</span>OPS</span>
+      <span class="cmd-name">EU MARKETS</span>
       <span class="cmd-sub">European tourism &amp; hotel markets</span>
     </a>
     <div class="cmd-status">
-      <span id="status-lights" class="status-lights" aria-label="Data source status"></span>
       <span id="freshness" class="cmd-fresh">Loading…</span>
-      <span id="utc-clock" class="cmd-clock" aria-label="Coordinated universal time"></span>
       <button id="theme-toggle" class="icon-button" type="button" aria-label="Toggle light / dark" title="Toggle light / dark">
         <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
       </button>
@@ -36,8 +34,8 @@
   </header>
 
   <nav class="tabs" aria-label="Sections">
-    <a href="#home" data-tab="home" class="tab-primary"><span class="tab-key">01</span>Situation map</a>
-    <a href="#center" data-tab="center" class="tab-primary"><span class="tab-key">02</span>Dossier</a>
+    <a href="#home" data-tab="home" class="tab-primary">Overview</a>
+    <a href="#center" data-tab="center" class="tab-primary">Country dossier</a>
     <span class="tabs-sep" aria-hidden="true">Explore</span>
     <a href="#markets" data-tab="markets">Markets</a>
     <a href="#seasonality" data-tab="seasonality">Seasonality</a>
@@ -75,10 +73,6 @@
     </p>
   </footer>
 
-  <div id="ticker" class="ticker" aria-label="Market ticker" hidden>
-    <span class="ticker-label">LIVE</span>
-    <div class="ticker-viewport"><div class="ticker-track"></div></div>
-  </div>
   <div id="tooltip-root"></div>
 </body>
 </html>

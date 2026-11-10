@@ -123,3 +123,11 @@ models:
       - name: kind
         tests:
           - accepted_values: {values: [sum, index, rate01, pct, level]}
+
+  - name: mart_airport_annual
+    description: Annual passengers per airport since 2005, latest year as YTD.
+    tests:
+      - unique_combination: {combination_of_columns: [airport_code, year]}
+    columns:
+      - name: passengers
+        tests: [non_negative]
