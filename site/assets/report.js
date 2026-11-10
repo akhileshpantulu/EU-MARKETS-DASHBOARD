@@ -162,7 +162,7 @@ function entityOptions(ctx, level, D) {
   return [...groupBy(aps, "country_name").entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))
     .map(([group, l]) => ({ group, options: l.sort((a, b) => (b.passengers_12m || 0) - (a.passengers_12m || 0)).map((a) => ({ value: a.airport_code, label: airportLabel(a) })) }));
 }
-const airportLabel = (a) => (a.city && a.iata_code ? `${a.city} (${a.iata_code})` : a.airport_name);
+const airportLabel = (a) => { const city = String(a.city || a.airport_name || a.airport_code).split("/")[0].trim(); return a.iata_code ? `${city} (${a.iata_code})` : city; };
 
 function entityName(ctx, level, code, D) {
   if (level === "airport") { const a = D.airport_summary.find((x) => x.airport_code === code); return a ? airportLabel(a) : code; }
@@ -271,6 +271,8 @@ async function buildReport(ctx, st) {
   }
   const D = await loadData([...need]);
   const ents = st.ids.map((code, i) => ({ code, i, level: st.level, name: entityName(ctx, st.level, code, D), meta: st.level === "airport" ? D.airport_summary.find((a) => a.airport_code === code) : ctx.geoMeta(code) }));
+  // Short names for table headers and legends.
+  for (const e of ents) e.short = e.name.length > 20 ? `${e.name.slice(0, 19).trim()}…` : e.name;
   const years = Array.from({ length: st.span }, (_, i) => st.end - st.span + 1 + i);
   const R = { ctx, st, D, ents, years, an, cmp: st.mode === "cmp", base: ctx.meta.baseline_year, cache: new Map() };
   // Standalone reports are measured against a benchmark: EU-27 for a country, its country for a
@@ -482,7 +484,7 @@ const yearTag = (R, r) => (!r ? "" : r.ytd ? ` (${r.year} YTD)` : r.year !== end
 
 // Comparative table: metrics as rows, a column group per participant.
 function compTable(R, keys) {
-  const P = parts(R);
+  const P = parts(R).filter((e) => keys.some((k) => inWindow(R, series(R, k, e)).length));
   const subs = [["value", "Value"], ...(R.an.has("yoy") ? [["yoy", "YoY"]] : []), ...(R.an.has("cagr") ? [["cagr", "CAGR"]] : []),
     ...(R.an.has("base") && P.length <= 2 ? [["base", `vs ${R.base}`]] : [])];
   const rows = [];
@@ -509,7 +511,7 @@ function compTable(R, keys) {
   }
   const ytd = P.map((e) => lastOf(R, keys[0], e)).find((r) => r?.ytd);
   if (ytd) notes.add(`YTD = ${ytd.year} to ${monthName(ytd.months)}; YoY compares the same months`);
-  return { groups: P.map((e) => ({ label: e.name, span: subs.length, bench: !!e.bench })), subs: subs.map(([, l]) => l), rows, notes: [...notes] };
+  return { groups: P.map((e) => ({ label: e.short || e.name, span: subs.length, bench: !!e.bench })), subs: subs.map(([, l]) => l), rows, notes: [...notes] };
 }
 function compTableXl(R, title, keys) {
   const P = parts(R);
@@ -560,58 +562,99 @@ function ibBase(p) {
   return { backgroundColor: "transparent", animation: false, textStyle: { fontFamily: css("--font"), color: p.text2, fontSize: 9 },
     tooltip: { trigger: "axis", backgroundColor: "#fff", borderColor: p.grid, textStyle: { color: p.text, fontSize: 10 } } };
 }
-function ibColumns(el, { cats, series: ss, fmt, labels = true, markZero = true }) {
+// Bar labels are sized to the space they have: flat when they fit, vertical when the bars are
+// narrow, none (with an axis) when even vertical labels would collide. The value axis gets
+// headroom for the labels so nothing is clipped at the top or bottom of the plot.
+function ibColumns(el, { cats, series: ss, fmt, labels = true, markZero = true, colors }) {
   const p = palette();
   if (!ss.some((s) => s.values.some(isNum))) return empty(el);
-  const showLabels = labels && cats.length * ss.length <= 32;
+  const W = el.clientWidth || 300, H = el.clientHeight || 200;
+  const n = ss.length;
+  const slot = ((W - 12) / Math.max(1, cats.length)) * 0.82 / n;
+  const fs = 8;
+  const vals = ss.flatMap((s) => s.values).filter(isNum);
+  const maxChars = Math.max(1, ...vals.map((v) => fmt(v).length));
+  const textW = maxChars * fs * 0.56 + 3;
+  const mode = !labels ? "none" : slot >= textW ? "flat" : slot >= fs + 2 ? "vertical" : "none";
+  const hi = Math.max(0, ...vals), lo = Math.min(0, ...vals);
+  const range = hi - lo || Math.abs(hi) || 1;
+  const plotH = Math.max(60, H - 26);
+  const need = mode === "vertical" ? textW : mode === "flat" ? fs + 6 : 0;
+  const pad = need ? (need / Math.max(20, plotH - 2 * need)) * range : range * 0.04;
   const chart = initChart(el);
+  const label = (v) => {
+    if (mode === "none" || !isNum(v)) return { show: false };
+    const negv = v < 0;
+    return mode === "flat"
+      ? { show: true, position: negv ? "bottom" : "top", fontSize: fs, color: p.text, distance: 2, formatter: () => fmt(v) }
+      : { show: true, position: negv ? "bottom" : "top", rotate: 90, align: negv ? "right" : "left", verticalAlign: "middle", fontSize: fs, color: p.text, distance: 3, formatter: () => fmt(v) };
+  };
   chart.setOption({
     ...ibBase(p),
-    grid: { left: showLabels ? 4 : 36, right: 6, top: 16, bottom: 18, containLabel: !showLabels },
+    grid: { left: mode === "none" ? 40 : 4, right: 6, top: 8, bottom: 18, containLabel: mode === "none" },
     xAxis: { type: "category", data: cats, axisTick: { show: false }, axisLine: { lineStyle: { color: p.axis } }, axisLabel: { color: p.text2, fontSize: 9, hideOverlap: true } },
-    yAxis: { type: "value", show: !showLabels, splitLine: { lineStyle: { color: p.grid } }, axisLabel: { color: p.muted, fontSize: 8.5, formatter: fmt } },
-    series: ss.map((s) => ({
-      name: s.name, type: "bar", barGap: "8%", barMaxWidth: 26, data: s.values.map((v) => (isNum(v) ? v : null)),
-      itemStyle: { color: s.color }, label: { show: showLabels, position: "top", fontSize: 8, color: p.text, formatter: (x) => fmt(x.value), distance: 2 },
-      ...(markZero ? { markLine: { silent: true, symbol: "none", label: { show: false }, lineStyle: { color: p.text2, width: 0.8, type: "solid" }, data: [{ yAxis: 0 }] } } : {}),
+    yAxis: { type: "value", show: mode === "none", min: lo < 0 ? lo - pad : 0, max: hi > 0 ? hi + pad : pad,
+      splitLine: { lineStyle: { color: p.grid, type: "dashed" } }, axisLabel: { color: p.muted, fontSize: 8.5, formatter: fmt } },
+    series: ss.map((s, si) => ({
+      name: s.name, type: "bar", barGap: "8%", barMaxWidth: 28,
+      data: s.values.map((v, i) => (isNum(v) ? { value: v, label: label(v), itemStyle: { color: colors ? colors[i] : s.color } } : null)),
+      itemStyle: { color: s.color },
+      ...(markZero && si === 0 ? { markLine: { silent: true, symbol: "none", label: { show: false }, lineStyle: { color: p.text2, width: 0.8, type: "solid" }, data: [{ yAxis: 0 }] } } : {}),
     })),
   });
   return chart;
 }
+// End labels shift apart when lines finish close together.
 function ibLines(el, { cats, series: ss, fmt, endLabels = true }) {
   const p = palette();
   if (!ss.some((s) => s.values.some(isNum))) return empty(el);
   const chart = initChart(el);
+  const widest = Math.max(1, ...ss.flatMap((s) => s.values).filter(isNum).map((v) => fmt(v).length));
   chart.setOption({
     ...ibBase(p),
-    grid: { left: 34, right: endLabels ? 44 : 8, top: 12, bottom: 18 },
+    grid: { left: 6, right: endLabels ? Math.max(30, widest * 5 + 10) : 8, top: 12, bottom: 4, containLabel: true },
     xAxis: { type: "category", data: cats, boundaryGap: false, axisTick: { show: false }, axisLine: { lineStyle: { color: p.axis } }, axisLabel: { color: p.text2, fontSize: 9, hideOverlap: true } },
     yAxis: { type: "value", scale: true, splitNumber: 4, splitLine: { lineStyle: { color: p.grid, type: "dashed" } }, axisLabel: { color: p.muted, fontSize: 8.5, formatter: fmt } },
     series: ss.map((s) => ({
       name: s.name, type: "line", data: s.values.map((v) => (isNum(v) ? v : null)), showSymbol: false, connectNulls: false,
       lineStyle: { color: s.color, width: s.bench ? 1.5 : 2.2, type: s.bench ? "dashed" : "solid" }, itemStyle: { color: s.color },
-      endLabel: { show: endLabels, formatter: (x) => fmt(x.value), color: s.color, fontSize: 8.5, fontWeight: 700, distance: 4 },
+      endLabel: { show: endLabels, formatter: (x) => fmt(Array.isArray(x.value) ? x.value[1] : x.value), color: s.color, fontSize: 8.5, fontWeight: 700, distance: 4 },
+      labelLayout: { moveOverlap: "shiftY" },
     })),
   });
   return chart;
 }
+// Horizontal bars: label size follows bar thickness; overlapping labels are dropped, never drawn on top of each other.
 function ibHBars(el, { cats, series: ss, fmt }) {
   const p = palette();
   if (!ss.some((s) => s.values.some(isNum))) return empty(el);
+  const H = el.clientHeight || 240;
+  const n = ss.length;
+  const maxCats = Math.max(4, Math.floor((H - 8) / Math.max(10, n * 7)));
+  const keep = cats.map((c, i) => i).filter((i) => ss.some((s) => isNum(s.values[i]))).slice(0, maxCats);
+  const thick = ((H - 8) / Math.max(1, keep.length)) * 0.8 / n;
+  const fs = Math.max(6.5, Math.min(8.5, thick + 1));
   const chart = initChart(el);
+  const widest = Math.max(1, ...ss.flatMap((s) => s.values).filter(isNum).map((v) => fmt(v).length));
+  // One place per category (ranked lists across places): stack so each bar is centred and full width.
+  const single = keep.every((i) => ss.filter((s) => isNum(s.values[i])).length <= 1);
+  const thickness = single ? ((H - 8) / Math.max(1, keep.length)) * 0.7 : thick;
   chart.setOption({
     ...ibBase(p), tooltip: { ...ibBase(p).tooltip, axisPointer: { type: "shadow" } },
-    grid: { left: 4, right: 36, top: 4, bottom: 4, containLabel: true },
+    grid: { left: 4, right: widest * fs * 0.6 + 8, top: 2, bottom: 2, containLabel: true },
     xAxis: { type: "value", show: false },
-    yAxis: { type: "category", data: cats, inverse: true, axisTick: { show: false }, axisLine: { lineStyle: { color: p.axis } }, axisLabel: { color: p.text, fontSize: 8.5, width: 120, overflow: "truncate" } },
+    yAxis: { type: "category", data: keep.map((i) => cats[i]), inverse: true, axisTick: { show: false }, axisLine: { lineStyle: { color: p.axis } },
+      axisLabel: { color: p.text, fontSize: 8.5, width: 120, overflow: "truncate" } },
     series: ss.map((s) => ({
-      name: s.name, type: "bar", barGap: "10%", barMaxWidth: 12, data: s.values.map((v) => (isNum(v) ? v : null)), itemStyle: { color: s.color },
-      label: { show: true, position: "right", fontSize: 8, color: p.text, formatter: (x) => fmt(x.value), distance: 2 },
+      name: s.name, type: "bar", barGap: "10%", barMaxWidth: 14, ...(single ? { stack: "one" } : {}),
+      data: keep.map((i) => (isNum(s.values[i]) ? s.values[i] : null)), itemStyle: { color: s.color },
+      label: { show: thickness >= 5, position: "right", fontSize: single ? Math.min(8.5, Math.max(7, thickness)) : fs, color: p.text, formatter: (x) => (isNum(x.value) ? fmt(x.value) : ""), distance: 2 },
+      labelLayout: { hideOverlap: true },
     })),
   });
   return chart;
 }
-const legendOf = (R, list = parts(R)) => { const p = palette(); return list.map((e) => ({ label: e.name, color: colorOf(p, e) })); };
+const legendOf = (R, list = parts(R)) => { const p = palette(); return list.map((e) => ({ label: e.short || e.name, color: colorOf(p, e) })); };
 
 // Standard charts for one metric across participants.
 function trendChart(R, key, { forceIndex = false } = {}) {
@@ -825,11 +868,13 @@ function mixSection(R, { rowsFor, nameOf, label, unit = "nights" }) {
   const share0 = (d, c) => d.first?.find((r) => r.code === c)?.share ?? null;
   const top3 = (rows) => rows.slice(0, 3).reduce((a, r) => a + (r.share || 0), 0);
   const showChg = R.an.has("cagr") || R.an.has("yoy");
+  const groupSubs = (d) => [String(d.y), ...(showChg && d.first ? [`Δ v ${d.y0}`] : [])];
+  const cellsFor = (d, sh, sh0) => [{ t: ibPct(sh) }, ...(showChg && d.first ? [{ t: isNum(sh) && isNum(sh0) ? ibPp((sh - sh0) * 100) : "n/a" }] : [])];
   const table = {
-    head: [label, ...P.flatMap((d) => [`${d.e.name} ${d.y}`, ...(showChg && d.first ? [`Δ since ${d.y0}`] : [])])],
-    body: union.map((c) => [nameOf(c), ...P.flatMap((d) => [ibPct(share(d, c)), ...(showChg && d.first ? [isNum(share(d, c)) && isNum(share0(d, c)) ? ibPp((share(d, c) - share0(d, c)) * 100) : "n/a"] : [])])]),
-    foot: ["Top-3 concentration", ...P.flatMap((d) => [ibPct(top3(d.cur)), ...(showChg && d.first ? [ibPp((top3(d.cur) - top3(d.first)) * 100)] : [])])],
-    benchCols: P.map((d) => d.e.bench),
+    rowHead: label,
+    groups: P.map((d) => ({ label: d.e.short || d.e.name, span: groupSubs(d).length, subs: groupSubs(d), bench: !!d.e.bench })),
+    rows: union.map((c) => ({ label: nameOf(c), cells: P.map((d) => cellsFor(d, share(d, c), share0(d, c))) })),
+    foot: { label: "Top-3 concentration", cells: P.map((d) => cellsFor(d, top3(d.cur), d.first ? top3(d.first) : null)) },
   };
   let headline = null; const bullets = [];
   if (R.an.has("commentary")) {
@@ -945,8 +990,9 @@ function routesSection(R) {
     return { e, y, top: rows.filter((r) => r.year === y).sort((a, b) => b.passengers - a.passengers).slice(0, 10) };
   }).filter(Boolean);
   if (!per.length) return null;
-  const table = { head: ["#", ...per.flatMap((d) => [`${d.e.name} ${d.y}`, "Pax", "YoY"])],
-    body: Array.from({ length: 10 }, (_, i) => [String(i + 1), ...per.flatMap((d) => { const r = d.top[i]; return r ? [r.partner_airport_name, ibVal(M.passengers, r.passengers), ibPct(r.passengers_yoy)] : ["", "", ""]; })]) };
+  const table = { rowHead: "#",
+    groups: per.map((d) => ({ label: `${d.e.short || d.e.name} ${d.y}`, span: 3, subs: ["Route", "Pax", "YoY"] })),
+    rows: Array.from({ length: 10 }, (_, i) => ({ label: String(i + 1), cells: per.map((d) => { const r = d.top[i]; return r ? [{ t: r.partner_airport_name, text: true }, { t: ibVal(M.passengers, r.passengers) }, { t: ibPct(r.passengers_yoy) }] : [{ t: "" }, { t: "" }, { t: "" }]; }) })) };
   const all = per.flatMap((d) => d.top.slice(0, 6).map((r) => ({ name: `${r.partner_airport_name}`, v: r.passengers, e: d.e }))).sort((a, b) => b.v - a.v).slice(0, 12);
   const charts = [{ title: "Busiest routes by passengers", legend: legendOf(R, per.map((d) => d.e)),
     draw: (el) => ibHBars(el, { cats: all.map((x) => (R.cmp ? `${x.name} (${x.e.name.split(" ")[0]})` : x.name)), fmt: (v) => ibVal(M.passengers, v), series: per.map((d) => ({ name: d.e.name, color: colorOf(p, d.e), values: all.map((x) => (x.e === d.e ? x.v : null)) })) }) }];
@@ -1020,6 +1066,19 @@ function scoreValue(R, e, key, what) {
   const t = what === "value" ? ibVal(m, v) : what === "cagr" ? ibGrowth(m, f.g) : ibChg(m, v);
   return { v, t, better: "high" };
 }
+// One bar per place: change against the baseline year, or compound growth over the window.
+function placeBars(R, key, what) {
+  const m = M[key];
+  const p = palette();
+  const P = parts(R).map((e) => ({ e, f: facts(R, key, e) })).filter((d) => isNum(what === "base" ? d.f.vb : d.f.g?.v));
+  if (!P.length) return null;
+  const v = (d) => (what === "base" ? d.f.vb : d.f.g.v) * 100;
+  const lf = P[0].f.lf?.year;
+  return { title: what === "base" ? `${short(m.label)}: ${lf} v ${R.base}` : `${short(m.label)}: compound annual growth`,
+    draw: (el) => ibColumns(el, { cats: P.map((d) => d.e.short || d.e.name), fmt: (x) => neg(x, `${Math.abs(x).toFixed(1)}%`),
+      series: [{ name: short(m.label), color: p.series[0], values: P.map(v) }], colors: P.map((d) => colorOf(p, d.e)) }) };
+}
+
 function summarySlide(R, sections) {
   const P = parts(R);
   const crit = SCORE[R.st.level].filter(([label]) => R.cmp || !label.startsWith("Size")).map(([label, key, what]) => ({ label, key, what, vals: P.map((e) => scoreValue(R, e, key, what)) }))
@@ -1038,10 +1097,10 @@ function summarySlide(R, sections) {
   }
   const avg = ranks.map((r) => (r.length ? r.reduce((a, x) => a + x, 0) / r.length : null));
   const table = R.cmp
-    ? { head: ["Criterion", ...own.map((e) => e.name)], score: true,
+    ? { head: ["Criterion", ...own.map((e) => e.short || e.name)], score: true,
       body: crit.map((c) => [c.label, ...own.map((e, i) => ({ t: c.vals[i]?.t ?? "n/a", rank: c.rank.get(i), n: c.rank.size }))]),
       foot: ["Average rank (overall)", ...own.map((e, i) => (isNum(avg[i]) ? `${avg[i].toFixed(1)} (${ordinal([...avg].filter(isNum).sort((a, b) => a - b).indexOf(avg[i]) + 1)})` : "n/a"))] }
-    : { head: ["Criterion", R.ents[0].name, ...(R.bench ? [R.bench.name, "Position"] : [])], score: true,
+    : { head: ["Criterion", R.ents[0].short || R.ents[0].name, ...(R.bench ? [R.bench.name, "Position"] : [])], score: true,
       body: crit.map((c) => [c.label, { t: c.vals[0]?.t ?? "n/a" }, ...(R.bench ? [{ t: c.vals[1]?.t ?? "n/a", bench: true }, { t: c.vsBench === "above" ? "▲ Ahead" : c.vsBench === "below" ? "▼ Behind" : "n/a", pos: c.vsBench }] : [])]),
       foot: R.bench ? ["Criteria ahead of benchmark", `${crit.filter((c) => c.vsBench === "above").length} of ${crit.filter((c) => c.vsBench).length}`, "", ""] : null };
   // Conclusions: the overall verdict, then each section's headline.
@@ -1069,7 +1128,10 @@ function summarySlide(R, sections) {
   // Excel values for change criteria need the same scaling as elsewhere.
   xl[0].rows = crit.map((c) => [c.label, ...P.map((e, i) => { const v = c.vals[i]?.v; if (!isNum(v)) return null; return c.key === "season" || c.what === "value" || (c.what === "cagr" && isRatio(M[c.key])) ? v : xlChg(M[c.key], v); })]);
   const headline = items[0]?.lead || null;
-  return { headline, items: items.slice(0, 7), table, scorecard: true, charts: [], bullets: [], appendix: [], xl };
+  // Charts under the conclusions: the lead metric indexed, and each place against 2019 (or its CAGR).
+  const lead = { country: "nights", region: "nights", airport: "passengers" }[R.st.level];
+  const charts = [trendChart(R, lead, { forceIndex: true }), placeBars(R, lead, R.an.has("base") ? "base" : "cagr")].filter(Boolean);
+  return { headline, items: items.slice(0, 7), table, scorecard: true, charts, bullets: [], appendix: [], xl };
 }
 
 // ------------------------------------------------------------------ document (4:3 slide deck)
@@ -1096,12 +1158,15 @@ function slideShell(title, { cover = false } = {}) {
   return { el, body, pg, src };
 }
 
-function renderCompTable(t) {
-  const head1 = h("tr", {}, h("th", { class: "text" }, ""), ...t.groups.map((g) => h("th", { colspan: String(g.span), class: `grp${g.bench ? " bench" : ""}` }, g.label)));
-  const head2 = h("tr", { class: "sub" }, h("th", { class: "text" }, "Metric"), ...t.groups.flatMap((g) => t.subs.map((s, j) => h("th", { class: `${j === 0 ? "gstart" : ""}${g.bench ? " bench" : ""}` }, s))));
-  const body = t.rows.map((r) => h("tr", {}, h("td", { class: "text" }, r.label),
-    ...r.cells.flatMap((cs, gi) => cs.map((c, j) => h("td", { class: `${j === 0 ? "gstart" : ""}${t.groups[gi].bench ? " bench" : ""}${c.bold ? " lead" : ""}${/^\(/.test(c.t) ? " negv" : ""}` }, c.t)))));
-  return h("table", { class: "sl-table comp" }, h("thead", {}, head1, head2), h("tbody", {}, body));
+function renderCompTable(t, groupIdx) {
+  const gi = groupIdx || t.groups.map((_, i) => i);
+  const G = gi.map((i) => ({ ...t.groups[i], subs: t.groups[i].subs || t.subs, i }));
+  const cls = (g, j, c = {}) => `${j === 0 ? "gstart" : ""}${g.bench ? " bench" : ""}${c.bold ? " lead" : ""}${c.text ? " text trunc" : ""}${/^\(/.test(c.t || "") ? " negv" : ""}`;
+  const head1 = h("tr", {}, h("th", { class: "text" }, ""), ...G.map((g) => h("th", { colspan: String(g.subs.length), class: `grp${g.bench ? " bench" : ""}` }, g.label)));
+  const isText = (g, j) => t.rows.some((r) => r.cells[g.i]?.[j]?.text);
+  const head2 = h("tr", { class: "sub" }, h("th", { class: "text" }, t.rowHead || "Metric"), ...G.flatMap((g) => g.subs.map((sub, j) => h("th", { class: `${cls(g, j)}${isText(g, j) ? " text" : ""}` }, sub))));
+  const row = (r, tag = "td") => h("tr", {}, h(tag, { class: "text" }, r.label), ...G.flatMap((g) => r.cells[g.i].map((c, j) => h(tag, { class: cls(g, j, c), title: c.text ? c.t : null }, c.t))));
+  return h("table", { class: "sl-table comp" }, h("thead", {}, head1, head2), h("tbody", {}, t.rows.map((r) => row(r))), t.foot ? h("tfoot", {}, row(t.foot)) : null);
 }
 function renderSimpleTable(t, { highlight } = {}) {
   const cell = (c, i, tag) => {
@@ -1172,6 +1237,7 @@ function renderDocument(ctx, host, doc, paper, scroll) {
       sl.body.append(h("div", { class: "sl-row" },
         h("div", { class: "sl-text" }, list),
         h("div", { class: "sl-tablewrap" }, h("div", { class: "sl-table-title" }, R.cmp ? "Scorecard (bold = ranked first)" : `Scorecard v ${R.bench?.name || "benchmark"}`), renderSimpleTable(s.table))));
+      if (s.charts?.length) sl.body.append(h("div", { class: `sl-figs n${s.charts.length}` }, s.charts.map(figure)));
       continue;
     }
     const tableEl = s.table?.groups ? renderCompTable(s.table) : s.table ? renderSimpleTable(s.table) : null;
@@ -1179,7 +1245,7 @@ function renderDocument(ctx, host, doc, paper, scroll) {
     const lines = [...(s.headline ? [s.headline] : []), ...(s.bullets || [])];
     const top = h("div", { class: "sl-row top" },
       lines.length ? h("div", { class: "sl-text" }, h("ul", { class: "sl-bullets" }, lines.map((b, i) => h("li", { class: i === 0 && s.headline ? "lead" : null }, b)))) : null,
-      tableEl ? h("div", { class: "sl-tablewrap" }, tableEl) : null);
+      tableEl ? Object.assign(h("div", { class: "sl-tablewrap" }, tableEl), { _t: s.table }) : null);
     if (!lines.length) top.classList.add("solo");
     sl.body.append(top);
     if (s.charts?.length) sl.body.append(h("div", { class: `sl-figs n${s.charts.length}${s.chartsWide ? " wide" : ""}` }, s.charts.map(figure)));
@@ -1213,17 +1279,45 @@ function renderDocument(ctx, host, doc, paper, scroll) {
   host.prepend(h("div", { class: "rp-toolbar" }, printBtn, xlBtn,
     h("span", { class: "rp-hint" }, `${slides.length} slides, 4:3. In the print dialog choose “Save as PDF”; Excel holds every table in HG format.`)));
   scroll.hidden = false;
-  for (const s of slides) for (const el of s.el.querySelectorAll(".sl-text, .sl-tablewrap")) fitText(el, 7);
+  // Layout is settled from measurements before any chart is drawn: tables first, then text.
+  for (const s of slides) arrange(s);
+  for (const s of slides) {
+    for (const el of s.el.querySelectorAll(".sl-tablewrap")) fitText(el, 7, 10.5);
+    for (const el of s.el.querySelectorAll(".sl-text")) fitText(el, 7.5, s.el.querySelector(".exec") ? 12.5 : 12);
+  }
   draws.forEach((d) => d());
   requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
 }
 
-function fitText(el, min) {
-  let fs = parseFloat(getComputedStyle(el).fontSize);
-  while ((el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) && fs > min) {
-    fs -= 0.5;
-    el.style.fontSize = `${fs}px`;
+// A table that does not fit beside the bullets at 8px takes the full width (bullets move next to
+// the charts); one that still does not fit at 7px is split into two stacked tables by place.
+function arrange(sl) {
+  const top = sl.el.querySelector(".sl-row.top");
+  const wrap = top?.querySelector(".sl-tablewrap");
+  if (!wrap) return;
+  const fits = (px) => { wrap.style.fontSize = `${px}px`; const ok = wrap.scrollWidth <= wrap.clientWidth + 1; wrap.style.fontSize = ""; return ok; };
+  const text = top.querySelector(".sl-text");
+  if (text && !fits(8)) {
+    const figs = sl.el.querySelector(".sl-figs");
+    top.classList.add("solo");
+    top.after(h("div", { class: "sl-row bottom" }, text, figs));
   }
+  const t = wrap._t;
+  if (!fits(7) && t?.groups?.length > 1) {
+    const k = Math.ceil(t.groups.length / 2);
+    const idx = t.groups.map((_, i) => i);
+    wrap.replaceChildren(renderCompTable(t, idx.slice(0, k)), renderCompTable(t, idx.slice(k)));
+    wrap.classList.add("split");
+  }
+  if (!fits(7)) wrap.classList.add("wrap-cells");
+}
+
+// Shrinks text that overflows its box; with max, first grows it to use spare room.
+function fitText(el, min, max = null) {
+  let fs = parseFloat(getComputedStyle(el).fontSize);
+  const over = () => el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+  if (max) while (!over() && fs < max) { fs += 0.5; el.style.fontSize = `${fs}px`; }
+  while (over() && fs > min) { fs -= 0.5; el.style.fontSize = `${fs}px`; }
 }
 
 // ------------------------------------------------------------------ Excel (HG format)

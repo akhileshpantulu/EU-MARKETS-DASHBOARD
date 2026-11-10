@@ -62,7 +62,14 @@
 .sl-row.top > .sl-text { flex: 0 0 36%; }
 .sl-row.top > .sl-tablewrap { flex: 1; }
 .sl-row.top.solo > .sl-tablewrap { flex: 1; }
-.sl-body.exec .sl-row { flex: 1; }
+.sl-body.exec .sl-row { flex: 0 1 auto; max-height: 62%; }
+.sl-row.bottom { flex: 1; min-height: 0; }
+.sl-row.bottom > .sl-text { flex: 0 0 30%; }
+.sl-row.bottom > .sl-figs { flex: 1; }
+.sl-tablewrap.split .sl-table + .sl-table { margin-top: 6px; }
+.sl-tablewrap.wrap-cells .sl-table th, .sl-tablewrap.wrap-cells .sl-table td { white-space: normal; }
+.sl-table td.trunc { max-width: 11em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-table th.grp { white-space: normal; }
 .sl-body.exec .sl-row > .sl-text { flex: 0 0 47%; }
 .sl-body.exec .sl-row > .sl-tablewrap { flex: 1; }
 .sl-text { overflow: hidden; min-height: 0; }
