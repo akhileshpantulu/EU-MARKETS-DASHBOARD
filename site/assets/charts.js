@@ -11,6 +11,7 @@ export function css(name) {
 
 export function palette() {
   return {
+    signal: css("--signal") || css("--accent"), mapBorder: css("--map-border") || css("--surface"), mapEmpty: css("--map-empty") || css("--grid"),
     text: css("--text"), text2: css("--text-2"), muted: css("--muted"), grid: css("--grid"), axis: css("--axis"),
     surface: css("--surface"), context: css("--context"),
     series: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => css(`--series-${i}`)),
@@ -245,7 +246,8 @@ function trimEurope(geojson) {
 /**
  * Choropleth. data: [{code, value}]; scale: "seq" | "div" (centred on 0).
  */
-export function choropleth(el, { name, geojson, data, scale = "seq", format = (v) => v, onClick, selected, labelFor }) {
+export function choropleth(el, { name, geojson, data, scale = "seq", format = (v) => v, onClick, selected, labelFor, tooltipHTML,
+  legend = true, center = [12, 52], zoom = 1 }) {
   if (!geojson) return empty(el, "Map boundaries not downloaded yet.");
   if (!data.some((d) => isNum(d.value))) return empty(el);
   if (!registered.has(name)) {
@@ -264,27 +266,30 @@ export function choropleth(el, { name, geojson, data, scale = "seq", format = (v
   chart.setOption({
     ...baseOption(p),
     tooltip: { ...baseOption(p).tooltip, trigger: "item", formatter: (x) => {
+      if (tooltipHTML) return tooltipHTML(x.name, x.value);
       const label = labelFor ? labelFor(x.name) : names.get(x.name) || x.name;
       return `${escapeHTML(label)}<br><b>${isNum(x.value) ? format(x.value) : "no data"}</b>`;
     } },
     visualMap: { show: false, type: "continuous", min, max, inRange: { color: scale === "div" ? p.div : p.seq } },
     series: [{
       type: "map", map: name, nameProperty: "code", roam: true, scaleLimit: { min: 1, max: 12 },
-      aspectScale: 0.68, layoutCenter: ["50%", "52%"], layoutSize: "118%", center: [12, 52], zoom: 1.0,
-      itemStyle: { areaColor: p.grid, borderColor: p.surface, borderWidth: 0.6 },
-      emphasis: { label: { show: false }, itemStyle: { areaColor: null, borderColor: p.text, borderWidth: 1.2 } },
-      select: { label: { show: false }, itemStyle: { borderColor: p.text, borderWidth: 1.6, areaColor: null } },
+      aspectScale: 0.68, layoutCenter: ["50%", "52%"], layoutSize: "118%", center, zoom,
+      itemStyle: { areaColor: p.mapEmpty, borderColor: p.mapBorder, borderWidth: 0.7 },
+      emphasis: { label: { show: false }, itemStyle: { areaColor: null, borderColor: p.signal, borderWidth: 1.6,
+        shadowColor: p.signal, shadowBlur: 8 } },
+      select: { label: { show: false }, itemStyle: { borderColor: p.signal, borderWidth: 2, areaColor: null } },
       selectedMode: onClick ? "single" : false,
       data: data.map((d) => ({ name: d.code, value: isNum(d.value) ? d.value : null, selected: d.code === selected })),
     }],
   });
   if (onClick) chart.on("click", (e) => onClick(e.name));
   el.nextElementSibling?.classList.contains("scale-legend") && el.nextElementSibling.remove();
-  el.after(h("div", { class: "scale-legend" },
+  chart.legendEl = h("div", { class: "scale-legend" },
     h("span", {}, `${vals[0] < min ? "≤ " : ""}${format(min)}`),
     h("span", { class: "bar", style: `background:${scaleGradient(scale)}` }),
     h("span", {}, `${vals[vals.length - 1] > max ? "≥ " : ""}${format(max)}`),
-    h("span", { class: "muted" }, "· grey: no data")));
+    h("span", { class: "muted" }, "· grey: no data"));
+  if (legend) el.after(chart.legendEl);
   return chart;
 }
 
@@ -299,7 +304,7 @@ export function bubbleMap(el, { geojson, points, format = (v) => v }) {
     ...baseOption(p),
     tooltip: { ...baseOption(p).tooltip, trigger: "item", formatter: (x) => `${escapeHTML(x.name)}<br><b>${format(x.value[2])}</b>` },
     geo: { map: "countries", roam: true, aspectScale: 0.68, layoutCenter: ["50%", "52%"], layoutSize: "118%", center: [12, 50],
-      itemStyle: { areaColor: p.grid, borderColor: p.surface, borderWidth: 0.6 }, emphasis: { disabled: true }, silent: true },
+      itemStyle: { areaColor: p.mapEmpty, borderColor: p.mapBorder, borderWidth: 0.6 }, emphasis: { disabled: true }, silent: true },
     series: [{ type: "scatter", coordinateSystem: "geo",
       data: points.map((d) => ({ name: d.name, value: [d.lon, d.lat, d.value] })),
       symbolSize: (v) => 6 + 30 * Math.sqrt(v[2] / max),

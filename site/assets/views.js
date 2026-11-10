@@ -2,7 +2,7 @@
 // ctx.filters (one filter row scoping every chart below it) and ctx.view.
 import {
   loadTable, loadJSON, groupBy, isNum, h, select, segmented, dataTable, fmtMonth, fmtNum, fmtInt, fmtPct,
-  fmtRate, fmtDec, fmtEur, fmtChange, deltaHTML, dateKeyToYm, monthName, downloadCSV,
+  fmtRate, fmtDec, fmtEur, fmtChange, deltaHTML, dateKeyToYm, monthName, downloadCSV, escapeHTML,
 } from "./util.js";
 import { card, timeChart, rankBars, heatmap, choropleth, bubbleMap, palette, empty, columnChart, legendHTML } from "./charts.js";
 import { liveFx, liveRates, liveEuNights, mergeRows } from "./live.js";
@@ -48,7 +48,7 @@ function latestComplete(rows, key = "year") {
 }
 
 // -------------------------------------------------------------------- overview
-/** Country map and year-to-date ranking (Markets tab). Clicking a country opens it in the control center. */
+/** Country map and year-to-date ranking (Markets tab). Clicking a country opens its dossier. */
 async function marketsMap(ctx, score) {
   const annual = await loadTable("country_annual");
   const g = ctx.state.geo;
@@ -70,7 +70,7 @@ async function marketsMap(ctx, score) {
     : annual.filter((r) => r.year === annualYear && ctx.isCountry(r.geo_code)).map((r) => ({ code: r.geo_code, value: m.get(r) }));
   const mapCard = card({
     title: `Countries: ${m.label}`, span: 7, height: "tall",
-    note: m.src === "annual" ? `${annualYear}, nights at tourist accommodation per inhabitant.` : "Latest month each country has published. Click a country to open it in the control center.",
+    note: m.src === "annual" ? `${annualYear}, nights at tourist accommodation per inhabitant.` : "Latest month each country has published. Click a country to open its dossier.",
     table: () => ({ columns: ["Country", m.label], rows: mapData.map((d) => [ctx.geoName(d.code), d.value]) }),
   });
 
@@ -137,13 +137,13 @@ export async function markets(ctx) {
     { key: "latest_unemployment_rate_pct", label: "Unemp.", fmt: (v) => fmtRate(v) },
   ];
   const c = card({ title: "Market scorecard", span: 12,
-    note: "Each country's latest published month. YTD compares the same months of the previous year. Avg stay = nights per arrival. Click a row to open the country in the control center.",
+    note: "Each country's latest published month. YTD compares the same months of the previous year. Avg stay = nights per arrival. Click a row to open the country dossier.",
     table: () => ({ columns: cols.map((x) => x.label), rows: rows.map((r) => cols.map((x) => r[x.key])) }), csvName: "market-scorecard" });
   c.chartEl.replaceWith(dataTable(cols, rows, {
     initialSort: { key: "latest_nights", dir: "desc" }, highlight: (r) => r.geo_code === ctx.state.geo,
     onRowClick: (r) => ctx.setState({ geo: r.geo_code, tab: "center" }),
   }));
-  ctx.view.append(h("p", { class: "view-intro" }, "Every European market Eurostat covers, side by side. Click a country on the map, the ranking or the table to open its full breakdown in the control center."),
+  ctx.view.append(h("p", { class: "view-intro" }, "Every European market Eurostat covers, side by side. Click a country on the map, the ranking or the table to open its dossier."),
     map.el, h("div", { style: "height:16px" }), grid(c));
   await map.draw();
 }
@@ -647,7 +647,7 @@ async function portugal(ctx) {
     colorFn: (d, pal) => (d.code === region ? pal.series[1] : d.value >= 0 ? pal.div[4] : pal.div[0]) });
 }
 
-/** Demand-health table of a destination's top source markets (Market demand tab and control center). */
+/** Demand-health table of a destination's top source markets (Market demand tab and dossier). */
 function healthCard(ctx, { dest, market, score, sourceMarkets, fxMonthly, smYear, top, onRowClick, span = 12 }) {
   const marketName = (c) => score.find((m) => m.market_code === c)?.market_name || ctx.geoName(c);
   // FX: change in the market's currency against the euro over 12 months (positive = euro stronger, travel to the euro area dearer).
@@ -800,7 +800,213 @@ export async function weather(ctx) {
   }
 }
 
-// -------------------------------------------------------------- control center
+// ------------------------------------------------------------- situation map
+const COUNTRY_METRICS = {
+  ytd_yoy: { label: "Nights YTD vs last year", group: "Demand", get: (r) => r.nights_ytd_yoy, scale: "div", fmt: (v) => fmtChange(v) },
+  ytd_base: { label: "Nights YTD vs 2019", group: "Demand", get: (r) => r.nights_ytd_vs_baseline, scale: "div", fmt: (v) => fmtChange(v) },
+  month_yoy: { label: "Nights, latest month YoY", group: "Demand", get: (r) => r.latest_nights_yoy, scale: "div", fmt: (v) => fmtChange(v) },
+  occ: { label: "Hotel bed occupancy", group: "Hotels", get: (r) => r.latest_bed_place_occupancy_rate, scale: "seq", fmt: (v) => fmtPct(v, 0) },
+  occ_chg: { label: "Occupancy change (pts)", group: "Hotels", get: (r) => r.latest_bed_place_occupancy_change, scale: "div", fmt: (v) => fmtChange(v, { pts: true }) },
+  air: { label: "Air passengers YoY", group: "Access", get: (r) => r.latest_air_passengers_yoy, scale: "div", fmt: (v) => fmtChange(v) },
+  platform: { label: "Platform rentals YoY", group: "Supply", get: (r) => r.latest_platform_nights_yoy, scale: "div", fmt: (v) => fmtChange(v) },
+  hicp: { label: "Accommodation inflation", group: "Prices", get: (r) => r.latest_hicp_accommodation_pct, scale: "seq", fmt: (v) => fmtRate(v) },
+  foreign: { label: "Foreign guests' share", group: "Mix", get: (r) => r.latest_foreign_share, scale: "seq", fmt: (v) => fmtPct(v, 0) },
+  intensity: { label: "Nights per resident", group: "Mix", get: (r) => r.nights_per_resident, scale: "seq", fmt: (v) => fmtDec(v, 1), annual: true },
+};
+const REGION_METRICS = {
+  r_yoy: { label: "Nights vs previous year", group: "Demand", get: (r) => r.nights_yoy, scale: "div", fmt: (v) => fmtChange(v) },
+  r_base: { label: "Nights vs 2019", group: "Demand", get: (r) => r.nights_vs_baseline, scale: "div", fmt: (v) => fmtChange(v) },
+  r_nights: { label: "Nights (volume)", group: "Demand", get: (r) => r.nights, scale: "seq", fmt: (v) => fmtNum(v) },
+  r_peak: { label: "Seasonality (peak 2 months)", group: "Mix", get: (r) => r.peak_two_month_share, scale: "seq", fmt: (v) => fmtPct(v, 0) },
+  r_platform: { label: "Platform rental share", group: "Supply", get: (r) => r.platform_share, scale: "seq", fmt: (v) => fmtPct(v, 0) },
+  r_foreign: { label: "Foreign guests' share", group: "Mix", get: (r) => r.foreign_share, scale: "seq", fmt: (v) => fmtPct(v, 0) },
+};
+
+function tipRow(label, value) { return `<tr><td>${escapeHTML(label)}</td><td>${value}</td></tr>`; }
+
+export async function home(ctx) {
+  const layer = ctx.state.layer === "regions" ? "regions" : "countries";
+  const metrics = layer === "regions" ? REGION_METRICS : COUNTRY_METRICS;
+  const mkey = metrics[ctx.state.hm] ? ctx.state.hm : Object.keys(metrics)[0];
+  const m = metrics[mkey];
+  const [score, annual, regions] = await Promise.all([loadTable("scorecard"), loadTable("country_annual"), loadTable("region_annual")]);
+  const base = ctx.meta.baseline_year;
+  const ym = (k) => fmtMonth(dateKeyToYm(k));
+  const annualYear = latestComplete(annual.filter((r) => ctx.isCountry(r.geo_code)));
+  const regYears = regions.filter((r) => isNum(m.get(r))).map((r) => r.year);
+  const regYear = layer === "regions" && regYears.length ? Math.max(...regYears) : null;
+
+  // Rows for the active layer: {code, name, value, country}
+  let rows;
+  if (layer === "regions") {
+    rows = regions.filter((r) => r.year === regYear && isNum(m.get(r)))
+      .map((r) => ({ code: r.geo_code, name: ctx.geoName(r.geo_code), country: r.geo_code.slice(0, 2), value: m.get(r), r }));
+  } else if (m.annual) {
+    rows = annual.filter((r) => r.year === annualYear && ctx.isCountry(r.geo_code) && isNum(m.get(r)))
+      .map((r) => ({ code: r.geo_code, name: ctx.geoName(r.geo_code), country: r.geo_code, value: m.get(r) }));
+  } else {
+    rows = score.filter((r) => ctx.isCountry(r.geo_code) && r.is_current && isNum(m.get(r)))
+      .map((r) => ({ code: r.geo_code, name: ctx.geoName(r.geo_code), country: r.geo_code, value: m.get(r) }));
+  }
+  rows.sort((a, b) => b.value - a.value);
+  const asOf = layer === "regions" ? String(regYear ?? "n/a") : m.annual ? String(annualYear) : "latest month per country";
+  const open = (row) => ctx.setState({ tab: "center", geo: row.country, region: layer === "regions" ? row.code : null });
+
+  // ---- left rail: layer, metric picker, ranked list
+  const grouped = groupBy(Object.entries(metrics), ([, x]) => x.group);
+  const metricList = h("div", { class: "metric-list", role: "group", "aria-label": "Map metric" },
+    [...grouped.entries()].flatMap(([group, items]) => items.map(([key, x]) =>
+      h("button", { type: "button", "aria-pressed": String(key === mkey), onclick: () => ctx.setState({ hm: key }) },
+        h("small", {}, group), h("span", {}, x.label)))));
+  const maxAbs = Math.max(...rows.map((r) => Math.abs(r.value)), 0) || 1;
+  const p = palette();
+  let chart = null;
+  const rankList = h("div", { class: "rank-list" }, rows.map((r, i) => {
+    const w = (Math.abs(r.value) / maxAbs) * (m.scale === "div" ? 50 : 100);
+    const style = m.scale === "div"
+      ? `left:${r.value >= 0 ? 50 : 50 - w}%;width:${w}%;background:${r.value >= 0 ? p.div[4] : p.div[0]}`
+      : `left:0;width:${w}%;background:${p.seq[3]}`;
+    const row = h("div", { class: "rank-row", tabindex: "0", role: "button", "aria-label": `${r.name}: ${m.fmt(r.value)}` },
+      h("span", { class: "code" }, String(i + 1).padStart(2, "0")),
+      h("span", { class: "name", title: r.name }, layer === "regions" ? `${r.name} · ${r.country}` : r.name),
+      h("span", { class: "bar" }, h("i", { style })),
+      h("span", { class: "val" }, m.fmt(r.value)));
+    row.addEventListener("mouseenter", () => chart?.dispatchAction({ type: "highlight", name: r.code }));
+    row.addEventListener("mouseleave", () => chart?.dispatchAction({ type: "downplay", name: r.code }));
+    row.addEventListener("click", () => open(r));
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter") open(r); });
+    return row;
+  }));
+  const rail = h("section", { class: "panel rail" },
+    h("div", { class: "panel-head" }, h("span", {}, "Indicator"), h("span", {}, layer === "regions" ? "NUTS 2" : "NUTS 0")),
+    h("div", { class: "panel-body metrics" }, metricList),
+    h("div", { class: "panel-head" }, h("span", {}, `Ranking · ${rows.length}`), h("span", {}, asOf)),
+    h("div", { class: "panel-body flush" }, rankList));
+
+  // ---- map
+  const mapEl = h("div", { class: "chart", role: "img", "aria-label": `Map of ${m.label}` });
+  const stage = h("div", { class: "map-stage" }, mapEl,
+    h("div", { class: "crosshair" }, `${layer === "regions" ? "REGIONS" : "COUNTRIES"} // ${m.label.toUpperCase()} // ${asOf.toUpperCase()}`),
+    h("div", { class: "map-layer" }, segmented("Layer", [{ value: "countries", label: "Countries" }, { value: "regions", label: "Regions" }], layer,
+      (v) => ctx.setState({ layer: v === "countries" ? null : v, hm: null }))));
+  const hud = h("div", { class: "map-hud" });
+  stage.append(hud);
+  const mapPanel = h("section", { class: "panel map-panel" },
+    h("div", { class: "panel-head" }, h("span", {}, h("b", {}, "Situation"), " · Europe"),
+      h("span", {}, "Hover for the brief · click to open the dossier")),
+    stage);
+
+  // ---- right rail: signals
+  const feed = h("div", { class: "sig-feed" }, h("div", { class: "loading" }, "Compiling signals…"));
+  const signals = h("section", { class: "panel signals" },
+    h("div", { class: "panel-head" }, h("span", {}, h("b", {}, "Signals")), h("span", {}, "derived from the latest data")),
+    h("div", { class: "panel-body flush" }, feed));
+
+  ctx.view.append(h("div", { class: "sit" }, rail, mapPanel, signals));
+
+  // Dossier tooltips
+  const byScore = new Map(score.map((r) => [r.geo_code, r]));
+  const tipCountry = (code, value) => {
+    const s = byScore.get(code);
+    if (!s) return `<div class="dossier-tip"><div class="t"><b>${escapeHTML(ctx.geoName(code))}</b><code>${code}</code></div>No Eurostat tourism data.</div>`;
+    return `<div class="dossier-tip"><div class="t"><b>${escapeHTML(ctx.geoName(code))}</b><code>${code}</code></div><table>
+      ${tipRow(m.label, isNum(value) ? m.fmt(value) : "n/a")}
+      ${tipRow(`Nights ${ym(s.nights_date_key)}`, `${fmtNum(s.latest_nights)} ${fmtChange(s.latest_nights_yoy)}`)}
+      ${tipRow("Nights YTD vs LY", fmtChange(s.nights_ytd_yoy))}
+      ${tipRow(`YTD vs ${base}`, fmtChange(s.nights_ytd_vs_baseline))}
+      ${tipRow("Hotel occupancy", `${fmtPct(s.latest_bed_place_occupancy_rate, 0)} ${fmtChange(s.latest_bed_place_occupancy_change, { pts: true })}`)}
+      ${tipRow("Air passengers YoY", fmtChange(s.latest_air_passengers_yoy))}
+      ${tipRow("Accommodation CPI", fmtRate(s.latest_hicp_accommodation_pct))}
+      </table><div class="hint">${s.is_current ? "Click: open dossier" : "No recent data"}</div></div>`;
+  };
+  const byRegion = new Map(rows.map((r) => [r.code, r.r]));
+  const tipRegion = (code, value) => {
+    const r = byRegion.get(code);
+    const head = `<div class="t"><b>${escapeHTML(ctx.geoName(code))}</b><code>${code}</code></div>`;
+    if (!r) return `<div class="dossier-tip">${head}No data for ${regYear}.</div>`;
+    return `<div class="dossier-tip">${head}<table>
+      ${tipRow("Country", escapeHTML(ctx.geoName(code.slice(0, 2))))}
+      ${tipRow(`Nights ${regYear}`, fmtNum(r.nights))}
+      ${tipRow("vs previous year", fmtChange(r.nights_yoy))}
+      ${tipRow(`vs ${base}`, fmtChange(r.nights_vs_baseline))}
+      ${tipRow("Peak two months", fmtPct(r.peak_two_month_share, 0))}
+      ${tipRow("Platform share", fmtPct(r.platform_share, 0))}
+      </table><div class="hint">Click: open ${escapeHTML(ctx.geoName(code.slice(0, 2)))} dossier</div></div>`;
+  };
+  const geojson = await geo(ctx, layer === "regions" ? "regions" : "countries");
+  chart = choropleth(mapEl, {
+    name: layer, geojson, data: rows.map((r) => ({ code: r.code, value: r.value })), scale: m.scale, format: m.fmt,
+    legend: false, labelFor: ctx.geoName, tooltipHTML: layer === "regions" ? tipRegion : tipCountry, center: [14, 52.5], zoom: 1.12,
+    onClick: (code) => {
+      const row = rows.find((r) => r.code === code);
+      if (row) open(row);
+      else if (layer === "countries" && byScore.has(code)) open({ code, country: code });
+    },
+  });
+  if (chart?.legendEl) hud.append(chart.legendEl);
+
+  // Signals: computed from the snapshot, newest data first.
+  buildSignals(ctx, score).then((items) => {
+    feed.replaceChildren(...items.map((it) => {
+      const el = h("div", { class: "sig", "data-geo": it.geo || null },
+        h("span", { class: `ico ${it.kind}` }, { up: "▲", down: "▼", info: "◆", warn: "!" }[it.kind]),
+        h("div", { html: `${it.html}<span class="sig-time">${escapeHTML(it.tag)}</span>` }));
+      if (it.geo) el.addEventListener("click", () => ctx.setState({ tab: "center", geo: it.geo }));
+      return el;
+    }));
+  }).catch((e) => { feed.replaceChildren(h("div", { class: "empty" }, `Signals unavailable: ${e.message}`)); });
+}
+
+async function buildSignals(ctx, score) {
+  const out = [];
+  const cur = score.filter((r) => ctx.isCountry(r.geo_code) && r.is_current);
+  const name = (c) => escapeHTML(ctx.geoName(c));
+  const eu = score.find((r) => r.geo_code === "EU27_2020");
+  const ym = (k) => fmtMonth(dateKeyToYm(k));
+  if (eu) out.push({ kind: eu.nights_ytd_yoy >= 0 ? "up" : "down", geo: "EU27_2020", tag: `EUROSTAT · NIGHTS · TO ${ym(eu.nights_date_key).toUpperCase()}`,
+    html: `<b>EU-27</b> nights ${fmtChange(eu.nights_ytd_yoy)} year to date; ${fmtChange(eu.nights_ytd_vs_baseline)} vs ${ctx.meta.baseline_year}.` });
+  const ytd = cur.filter((r) => isNum(r.nights_ytd_yoy)).sort((a, b) => b.nights_ytd_yoy - a.nights_ytd_yoy);
+  ytd.slice(0, 3).forEach((r) => out.push({ kind: "up", geo: r.geo_code, tag: `DEMAND · YTD TO ${ym(r.nights_date_key).toUpperCase()}`,
+    html: `<b>${name(r.geo_code)}</b> nights ${fmtChange(r.nights_ytd_yoy)} year to date.` }));
+  ytd.slice(-3).reverse().filter((r) => r.nights_ytd_yoy < 0).forEach((r) => out.push({ kind: "down", geo: r.geo_code,
+    tag: `DEMAND · YTD TO ${ym(r.nights_date_key).toUpperCase()}`, html: `<b>${name(r.geo_code)}</b> nights ${fmtChange(r.nights_ytd_yoy)} year to date.` }));
+  const occ = cur.filter((r) => isNum(r.latest_bed_place_occupancy_change)).sort((a, b) => b.latest_bed_place_occupancy_change - a.latest_bed_place_occupancy_change);
+  if (occ.length) {
+    const a = occ[0], z = occ.at(-1);
+    out.push({ kind: "up", geo: a.geo_code, tag: `HOTELS · ${ym(a.occupancy_date_key).toUpperCase()}`,
+      html: `<b>${name(a.geo_code)}</b> hotel occupancy ${fmtPct(a.latest_bed_place_occupancy_rate, 0)}, ${fmtChange(a.latest_bed_place_occupancy_change, { pts: true })} on a year earlier.` });
+    if (z.latest_bed_place_occupancy_change < 0) out.push({ kind: "down", geo: z.geo_code, tag: `HOTELS · ${ym(z.occupancy_date_key).toUpperCase()}`,
+      html: `<b>${name(z.geo_code)}</b> hotel occupancy ${fmtChange(z.latest_bed_place_occupancy_change, { pts: true })} on a year earlier.` });
+  }
+  const air = cur.filter((r) => isNum(r.latest_air_passengers_yoy)).sort((a, b) => b.latest_air_passengers_yoy - a.latest_air_passengers_yoy);
+  if (air.length) out.push({ kind: "up", geo: air[0].geo_code, tag: `AIR · ${ym(air[0].air_date_key).toUpperCase()}`,
+    html: `<b>${name(air[0].geo_code)}</b> air passengers ${fmtChange(air[0].latest_air_passengers_yoy)} on a year earlier, the fastest growth.` });
+  const cpi = cur.filter((r) => isNum(r.latest_hicp_accommodation_pct)).sort((a, b) => b.latest_hicp_accommodation_pct - a.latest_hicp_accommodation_pct);
+  if (cpi.length) out.push({ kind: "info", geo: cpi[0].geo_code, tag: `PRICES · HICP ${ym(cpi[0].hicp_date_key).toUpperCase()}`,
+    html: `<b>${name(cpi[0].geo_code)}</b> has the highest accommodation inflation: ${fmtRate(cpi[0].latest_hicp_accommodation_pct)}.` });
+  const plat = cur.filter((r) => isNum(r.latest_platform_nights_yoy)).sort((a, b) => b.latest_platform_nights_yoy - a.latest_platform_nights_yoy);
+  if (plat.length) out.push({ kind: plat[0].latest_platform_nights_yoy >= 0 ? "up" : "down", geo: plat[0].geo_code, tag: `RENTALS · ${ym(plat[0].platform_date_key).toUpperCase()}`,
+    html: `<b>${name(plat[0].geo_code)}</b> platform rental nights ${fmtChange(plat[0].latest_platform_nights_yoy)} on a year earlier.` });
+
+  const [ms, weather, rates] = await Promise.all([loadTable("market_scorecard"), loadTable("weather_monthly"), loadTable("rates")]);
+  ms.filter((r) => isNum(r.oecd_cli_change_3m)).sort((a, b) => a.oecd_cli_change_3m - b.oecd_cli_change_3m).slice(0, 2)
+    .filter((r) => r.oecd_cli_change_3m < 0).forEach((r) => out.push({ kind: "down", tag: "SOURCE MARKETS · OECD LEADING INDICATOR",
+      html: `<b>${escapeHTML(r.market_name)}</b> leading indicator ${signed(r.oecd_cli_change_3m, 1)} pts in three months (${fmtDec(r.oecd_cli, 1)}).` }));
+  const lastW = weather.reduce((mx, r) => (r.month > mx ? r.month : mx), "");
+  const locs = new Map(ctx.meta.weather_locations.map((l) => [l.location_code, l]));
+  weather.filter((r) => r.month === lastW && isNum(r.temp_anomaly_c)).sort((a, b) => Math.abs(b.temp_anomaly_c) - Math.abs(a.temp_anomaly_c)).slice(0, 2)
+    .forEach((r) => out.push({ kind: "info", geo: locs.get(r.location_code)?.country_code, tag: `WEATHER · ${fmtMonth(lastW).toUpperCase()}`,
+      html: `<b>${escapeHTML(locs.get(r.location_code)?.location_name || r.location_code)}</b> ran ${signed(r.temp_anomaly_c, 1, "°C")} against its normal.` }));
+  const dep = rates.filter((r) => r.series_code === "deposit_rate").at(-1);
+  if (dep) out.push({ kind: "info", tag: `ECB · ${dep.date}`, html: `ECB deposit facility rate <b>${fmtRate(dep.rate_pct, 2)}</b>.` });
+  const bad = ctx.meta.sources.filter((s) => s.status !== "ok");
+  out.push(bad.length
+    ? { kind: "warn", tag: "PIPELINE", html: `<b>${bad.length}</b> source${bad.length > 1 ? "s" : ""} stale or failing: ${bad.map((s) => escapeHTML(s.source_key)).join(", ")}.` }
+    : { kind: "info", tag: `PIPELINE · BUILT ${ctx.meta.generated_at.slice(0, 16).replace("T", " ")} UTC`, html: `All <b>${ctx.meta.sources.length}</b> sources refreshed successfully.` });
+  return out;
+}
+
+// ---------------------------------------------------------- country dossier
 const QUICK_PICKS = ["EU27_2020", "ES", "IT", "FR", "DE", "EL", "PT", "HR", "AT", "NL", "CY", "MT"];
 
 const SECTIONS = [
@@ -819,8 +1025,9 @@ const CHANGE_FMT = {
 };
 
 function section(id, title, note, ...children) {
+  const idx = String(SECTIONS.findIndex(([k]) => k === id) + 1).padStart(2, "0");
   return h("section", { class: "cc-section", id: `cc-${id}` },
-    h("div", { class: "cc-section-head" }, h("h2", {}, title), note ? h("p", { class: "note", html: note }) : null),
+    h("div", { class: "cc-section-head" }, h("h2", {}, h("span", { class: "idx" }, idx), title), note ? h("p", { class: "note", html: note }) : null),
     h("div", { class: "grid" }, children.flat().map((c) => c.el || c)));
 }
 
@@ -900,11 +1107,15 @@ export async function center(ctx) {
     h("button", { type: "button", class: "chip", "aria-pressed": String(c === g), onclick: () => ctx.setState({ geo: c }) }, ctx.geoName(c).replace("European Union - 27 countries (from 2020)", "EU 27"))));
   const nav = h("nav", { class: "cc-nav", "aria-label": "Sections" }, SECTIONS.map(([id, label]) =>
     h("a", { href: `#cc-${id}`, onclick: (e) => { e.preventDefault(); document.getElementById(`cc-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); } }, label)));
+  const okSources = ctx.meta.sources.filter((x) => x.status === "ok").length;
   const head = h("div", { class: "cc-head" },
-    h("div", {}, h("h2", { class: "cc-title" }, ctx.geoName(g)),
+    h("div", { class: "dossier-id" },
+      h("div", { class: "dossier-code" }, g === "EU27_2020" ? "EU" : g.slice(0, 2)),
+      h("div", {}, h("h2", { class: "cc-title" }, ctx.geoName(g)),
+      h("div", { class: "dossier-meta" }, `Dossier · nights → ${ym(s.nights_date_key)} · air → ${ym(s.air_date_key)} · sources ${okSources}/${ctx.meta.sources.length} ok`),
       h("p", { class: "note", html: `${mode === "pace"
         ? `Pace: each month of the latest year against the two years before and ${base}.`
-        : `Annual history since ${firstYear ?? "n/a"}: change on the previous year; the latest year is year to date against the same months a year earlier.`}${s.is_current === false ? " <b>This market has no recent Eurostat tourism data.</b>" : ""}` })),
+        : `Annual history since ${firstYear ?? "n/a"}: change on the previous year; the latest year is year to date against the same months a year earlier.`}${s.is_current === false ? " <b>This market has no recent Eurostat tourism data.</b>" : ""}` }))),
     picks);
   const tiles = h("div", { class: "tiles" },
     tile(`Nights, ${ym(s.nights_date_key)}`, fmtNum(s.latest_nights), `${deltaHTML(s.latest_nights_yoy)} vs a year earlier`),
@@ -988,7 +1199,8 @@ export async function center(ctx) {
       const ry = yrs.length ? Math.max(...yrs) : null;
       const reg = regions.filter((r) => r.geo_code.startsWith(g) && r.year === ry).map((r) => ({ ...r, name: ctx.geoName(r.geo_code) }));
       const c1 = card({ title: `Nights by region, ${ry ?? "n/a"}`, span: 5 });
-      const draw1 = () => rankBars(c1.chartEl, { items: reg.filter((r) => isNum(r.nights)).sort((a, b) => b.nights - a.nights).slice(0, 15).map((r) => ({ label: r.name, value: r.nights })), format: (v) => fmtNum(v) });
+      const draw1 = () => rankBars(c1.chartEl, { items: reg.filter((r) => isNum(r.nights)).sort((a, b) => b.nights - a.nights).slice(0, 15).map((r) => ({ label: r.name, value: r.nights, code: r.geo_code })),
+        format: (v) => fmtNum(v), colorFn: (d, pal) => (d.code === ctx.state.region ? pal.series[1] : pal.series[0]) });
       const cols = [
         { key: "name", label: "Region", text: true }, { key: "nights", label: "Nights", fmt: (v) => fmtNum(v) },
         { key: "nights_yoy", label: "YoY", fmt: (v) => deltaHTML(v) }, { key: "nights_vs_baseline", label: `vs ${base}`, fmt: (v) => deltaHTML(v) },
@@ -996,9 +1208,12 @@ export async function center(ctx) {
         { key: "share_of_country_nights", label: "Share", fmt: pctFmt(0) }];
       const c2 = card({ title: "Regional scorecard", span: 7, csvName: `regions-${g}`,
         table: () => ({ columns: cols.map((c) => c.label), rows: reg.map((r) => cols.map((c) => r[c.key])) }) });
-      c2.chartEl.replaceWith(dataTable(cols, reg, { initialSort: { key: "nights", dir: "desc" } }));
-      put("regions", "Regions", "NUTS 2 regions, annual nights at tourist accommodation.", [{ card: c1, draw: draw1 }, { card: c2 }],
+      c2.chartEl.replaceWith(dataTable(cols, reg, { initialSort: { key: "nights", dir: "desc" }, highlight: (r) => r.geo_code === ctx.state.region }));
+      const picked = reg.find((r) => r.geo_code === ctx.state.region);
+      put("regions", "Regions", picked ? `NUTS 2 regions. Selected on the map: <b>${escapeHTML(picked.name)}</b>, ${fmtNum(picked.nights)} nights in ${ry}, ${fmtChange(picked.nights_yoy)} on the year before.`
+        : "NUTS 2 regions, annual nights at tourist accommodation.", [{ card: c1, draw: draw1 }, { card: c2 }],
         [h("div", { class: "span-12 cc-more" }, exploreLink(ctx, "regions", "Regional map", { regCountry: g }))]);
+      if (picked) setTimeout(() => document.getElementById("cc-regions")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
     },
 
     origins: async () => {

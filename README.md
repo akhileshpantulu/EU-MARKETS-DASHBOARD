@@ -32,10 +32,25 @@ market Eurostat covers, adds 15 more sources and replaces Streamlit with a stati
 
 ## The dashboard
 
-**Control center (home page).** Pick a country (or the EU total) and every section is laid out
-for it on one page, with a sticky jump-to bar: demand, occupancy and length of stay,
+The site is laid out as an operations console (dark by default, light on the toggle): a
+command bar with the build time, a UTC clock and one status light per data source, and a
+ticker along the bottom with ECB rates, FX (live from the ECB when reachable) and EU headline numbers.
+
+**01 Situation map (home page).** A full-height map of Europe with a Countries / Regions
+layer switch. The left rail picks the indicator (YTD growth, vs 2019, occupancy, air traffic,
+rentals, accommodation inflation, foreign share, intensity; for regions: growth, vs 2019,
+volume, seasonality, platform share) and ranks every country or region by it; hovering a row
+lights it up on the map. Hovering the map shows a brief; clicking a country, or a region,
+opens its dossier. The right rail is a signals feed derived from the data: biggest movers,
+occupancy swings, fastest air growth, highest accommodation inflation, platform rentals,
+source markets whose OECD leading indicator is falling, weather anomalies, the ECB rate
+and pipeline health.
+
+**02 Dossier.** Pick a country (or the EU total) and every section is laid out for it on one
+page, numbered, with a sticky jump-to bar: demand, occupancy and length of stay,
 seasonality, regions, source markets, short-stay rentals, air traffic, prices, macro,
-source-market demand health, weather, hotel prices, and FX and rates.
+source-market demand health, weather, hotel prices, and FX and rates. A region picked on
+the map is highlighted in its regions section.
 
 One switch changes every chart on the page:
 
