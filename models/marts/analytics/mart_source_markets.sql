@@ -11,9 +11,16 @@ totals as (
     select
         geo_code,
         year,
-        coalesce(max(nights) filter (where partner_code = 'FOR'),
-                 max(nights) filter (where partner_code = 'TOTAL') - max(nights) filter (where partner_code = geo_code))
-            as foreign_nights
+        -- tour_occ_ninraw publishes all guests as WORLD and residents as DOM; older
+        -- extracts used TOTAL / FOR. Take whichever pair is present.
+        coalesce(
+            max(nights) filter (where partner_code = 'FOR'),
+            max(nights) filter (where partner_code in ('WORLD', 'TOTAL'))
+                - coalesce(max(nights) filter (where partner_code = 'DOM'),
+                           max(nights) filter (where partner_code = geo_code))
+        ) as foreign_nights,
+        -- Fallback denominator: the sum of the country markets published.
+        sum(nights) filter (where is_country and partner_code <> geo_code) as country_markets_nights
     from f
     group by all
 ),
@@ -30,7 +37,7 @@ select
     m.partner_name,
     m.year,
     m.nights,
-    m.nights / nullif(t.foreign_nights, 0) as share_of_foreign_nights,
+    m.nights / nullif(coalesce(t.foreign_nights, t.country_markets_nights), 0) as share_of_foreign_nights,
     m.nights / nullif(ly.nights, 0) - 1 as nights_yoy,
     m.nights / nullif(bl.nights, 0) - 1 as nights_vs_baseline,
     row_number() over (partition by m.geo_code, m.year order by m.nights desc) as market_rank

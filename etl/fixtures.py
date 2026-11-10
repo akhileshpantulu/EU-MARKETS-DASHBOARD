@@ -136,18 +136,16 @@ def eurostat_docs() -> dict[str, dict | list]:
         if y > 2025:
             return None
         tot = annual(g, y)
-        if p == "TOTAL":
+        if p == "WORLD":
             return tot
-        if p == "FOR":
-            return tot * foreign_share[g]
-        if p == g:
+        if p == "DOM":
             return tot * (1 - foreign_share[g])
         return tot * foreign_share[g] * partner_weight[p] / sum(partner_weight.values()) * 0.8
 
     docs["tour_occ_ninraw"] = jsonstat(
-        "Nights by residence", {"freq": ["A"], "c_resid": ["TOTAL", "FOR", *PARTNERS], "unit": ["NR"],
+        "Nights by residence", {"freq": ["A"], "c_resid": ["WORLD", "DOM", *PARTNERS], "unit": ["NR"],
                                 "nace_r2": ["I551-I553"], "geo": list(COUNTRIES), "time": years},
-        ninraw, {"UK": "United Kingdom", "US": "United States", "FOR": "Foreign country", "TOTAL": "Total"})
+        ninraw, {"UK": "United Kingdom", "US": "United States", "DOM": "Reporting country", "WORLD": "All countries of the world"})
 
     def region_month(r, ym):
         country, share = REGIONS[r]

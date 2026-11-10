@@ -172,6 +172,7 @@ function alignTo(xs, data) {
 
 /** Horizontal ranked bars. items: [{label, value, color?, highlight?}] */
 export function rankBars(el, { items, format = (v) => v, onClick, colorFn }) {
+  items = items.filter((d) => isNum(d.value));
   if (!items.length) return empty(el);
   const p = palette();
   const chart = init(el);
