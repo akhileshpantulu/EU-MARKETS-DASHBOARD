@@ -23,6 +23,16 @@ with periods as (
     union all select 'ecb.' || series_code, strftime(max(rate_date), '%Y-%m-%d') from {{ ref('fact_interest_rates') }} group by series_code
     union all select 'ine.irsh_zone_adr', max(date_key)::varchar from {{ ref('fact_spain_zone_hotel_prices_monthly') }} where adr_eur is not null
     union all select 'ine.irsh_zone_revpar', max(date_key)::varchar from {{ ref('fact_spain_zone_hotel_prices_monthly') }} where revpar_eur is not null
+    union all select 'eurostat.avia_par', max(date_key)::varchar from {{ ref('fact_route_passengers_monthly') }}
+    union all select 'eurostat.sts_trtu_m', max(date_key)::varchar from {{ ref('fact_market_demand_monthly') }} where retail_volume_index is not null
+    union all select 'oecd.oecd_cli', max(date_key)::varchar from {{ ref('fact_market_demand_monthly') }} where oecd_cli is not null
+    union all select 'oecd.oecd_cci', max(date_key)::varchar from {{ ref('fact_market_demand_monthly') }} where oecd_consumer_confidence is not null
+    union all select 'eurostat.prc_hpi_q', strftime(max(quarter_start), '%Y-%m') from {{ ref('fact_house_prices_quarterly') }}
+    union all select 'eurostat.tour_dem_tttot', max(year)::varchar from {{ ref('fact_resident_travel_annual') }} where trips_abroad is not null
+    union all select 'eurostat.tour_dem_extot', max(year)::varchar from {{ ref('fact_resident_travel_annual') }} where spend_abroad_eur is not null
+    union all select 'openmeteo.weather', max(date_key)::varchar from {{ ref('fact_weather_monthly') }}
+    union all select 'inept.lodging_income', max(date_key)::varchar from {{ ref('fact_portugal_accommodation_monthly') }} where lodging_income_eur is not null
+    union all select 'inept.nights', max(date_key)::varchar from {{ ref('fact_portugal_accommodation_monthly') }} where nights is not null
 )
 
 select

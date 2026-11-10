@@ -59,3 +59,21 @@ sources:
         description: INE IRSH table 46300. Revenue per available room (RevPAR) by Spanish tourist zone.
       - name: source_manifest
         description: One row per downloaded source with status, timestamps and request URL.
+      - name: eurostat_avia_par
+        description: Eurostat avia_par_<country>. Passengers by airport pair, monthly; one dataset per reporting country, merged.
+      - name: openmeteo_daily
+        description: Open-Meteo ERA5 archive. Daily temperature, precipitation and sunshine per destination.
+      - name: eurostat_sts_trtu_m
+        description: Eurostat sts_trtu_m. Retail trade volume (G47), seasonally and calendar adjusted.
+      - name: eurostat_prc_hpi_q
+        description: Eurostat prc_hpi_q. House price index, annual rate of change.
+      - name: eurostat_tour_dem_tttot
+        description: Eurostat tour_dem_tttot. Trips by residents, domestic and abroad, annual.
+      - name: eurostat_tour_dem_extot
+        description: Eurostat tour_dem_extot. Tourism expenditure of residents, annual.
+      - name: oecd_cli
+        description: OECD composite leading indicator (DF_CLI, LI), ISO3 areas.
+      - name: oecd_cci
+        description: OECD consumer confidence indicator (DF_CLI, CCICP), ISO3 areas.
+      - name: inept_accommodation_monthly
+        description: Statistics Portugal indicators 0012091 (lodging income) and 0012092 (nights), NUTS 2024 x type, monthly.

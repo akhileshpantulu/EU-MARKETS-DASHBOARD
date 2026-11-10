@@ -126,8 +126,8 @@ function axisStyle(p) {
  * series: [{name, data: [[x, y]], color?, type?, area?, stack?, width?}]
  */
 export function timeChart(el, { series, yFormat = (v) => v, yName, zoom = false, xType = "category", yMin, markZero = false,
-  categories, xFormat }) {
-  if (!series.some((s) => s.data.some((d) => isNum(d[1])))) return empty(el);
+  categories, xFormat, emptyMessage }) {
+  if (!series.some((s) => s.data.some((d) => isNum(d[1])))) return empty(el, emptyMessage);
   const p = palette();
   const chart = init(el);
   const ax = axisStyle(p);

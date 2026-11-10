@@ -3,7 +3,8 @@ import { loadJSON, loadTable, fmtMonth } from "./util.js";
 import { disposeAll } from "./charts.js";
 import * as views from "./views.js";
 
-const TABS = ["overview", "markets", "country", "seasonality", "regions", "sources", "rentals", "air", "macro", "rates", "spain", "data"];
+const TABS = ["overview", "markets", "country", "seasonality", "regions", "sources", "rentals", "air", "macro", "demand",
+  "weather", "rates", "spain", "data"];
 const DEFAULT_GEO = "EU27_2020";
 
 const store = {
@@ -68,6 +69,7 @@ async function main() {
       Object.assign(ctx.state, patch);
       if (patch.geo) store.set("geo", patch.geo);
       if ("geo" in patch && !("region" in patch)) delete ctx.state.region;
+      if ("geo" in patch && !("airport" in patch)) delete ctx.state.airport;
       writeHash(ctx.state);
       render();
     },

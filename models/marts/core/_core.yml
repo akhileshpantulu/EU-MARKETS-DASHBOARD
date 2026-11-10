@@ -46,12 +46,12 @@ models:
         tests: [unique, not_null]
 
   - name: dim_airport
+    description: Every airport in traffic or route data; curated ones carry coordinates.
     columns:
       - name: airport_code
         tests: [unique, not_null]
-      - name: country_code
-        tests:
-          - relationships: {to: ref('dim_geo'), field: geo_code}
+      - name: airport_name
+        tests: [not_null]
 
   - name: dim_currency
     columns:
@@ -224,3 +224,79 @@ models:
       - name: implied_room_occupancy_rate
         tests:
           - between: {min_value: 0, max_value: 1.05}
+
+  - name: dim_weather_location
+    columns:
+      - name: location_code
+        tests: [unique, not_null]
+      - name: country_code
+        tests:
+          - relationships: {to: ref('dim_geo'), field: geo_code}
+
+  - name: fact_weather_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [location_code, date_key]}
+    columns:
+      - name: date_key
+        tests:
+          - relationships: {to: ref('dim_date'), field: date_key}
+      - name: avg_temp_c
+        tests:
+          - between: {min_value: -40, max_value: 45}
+      - name: precipitation_mm
+        tests: [non_negative]
+      - name: sunshine_hours
+        tests:
+          - between: {min_value: 0, max_value: 500}
+
+  - name: dim_market
+    description: Source markets (European countries and OECD economies); codes match dim_partner.
+    columns:
+      - name: market_code
+        tests: [unique, not_null]
+
+  - name: fact_market_demand_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [market_code, date_key]}
+    columns:
+      - name: date_key
+        tests:
+          - relationships: {to: ref('dim_date'), field: date_key}
+      - name: oecd_cli
+        tests:
+          - between: {min_value: 80, max_value: 120}
+
+  - name: fact_house_prices_quarterly
+    tests:
+      - unique_combination: {combination_of_columns: [market_code, quarter_start]}
+
+  - name: fact_resident_travel_annual
+    tests:
+      - unique_combination: {combination_of_columns: [market_code, year]}
+    columns:
+      - name: trips_abroad
+        tests: [non_negative]
+
+  - name: fact_route_passengers_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [airport_code, partner_airport_code, date_key]}
+    columns:
+      - name: airport_code
+        tests:
+          - relationships: {to: ref('dim_airport'), field: airport_code}
+      - name: partner_airport_code
+        tests:
+          - relationships: {to: ref('dim_airport'), field: airport_code}
+      - name: passengers
+        tests: [non_negative]
+
+  - name: fact_portugal_accommodation_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [region_code, accommodation_type_code, date_key]}
+    columns:
+      - name: date_key
+        tests:
+          - relationships: {to: ref('dim_date'), field: date_key}
+      - name: revenue_per_night_eur
+        tests:
+          - between: {min_value: 0, max_value: 2000}

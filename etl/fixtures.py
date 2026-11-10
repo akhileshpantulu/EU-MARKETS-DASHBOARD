@@ -233,7 +233,72 @@ def eurostat_docs() -> dict[str, dict | list]:
     docs["demo_gind"] = jsonstat(
         "Population", {"freq": ["A"], "indic_de": ["JAN"], "geo": geos, "time": years},
         lambda c: 1e7 * (COUNTRIES.get(c["geo"]) or AGGREGATES[c["geo"]]) * 1.3, geo_labels)
+    docs["sts_trtu_m"] = jsonstat(
+        "Retail volume", {"freq": ["M"], "indic_bt": ["VOL_SLS"], "nace_r2": ["G47"], "s_adj": ["SCA"],
+                          "unit": ["I21"], "geo": geos, "time": ms},
+        lambda c: 95 + 0.4 * (int(c["time"][:4]) - 2015) + RNG.uniform(-1, 1), geo_labels)
+    docs["prc_hpi_q"] = jsonstat(
+        "House prices", {"freq": ["Q"], "purchase": ["TOTAL"], "unit": ["RCH_A"], "geo": geos, "time": quarters},
+        lambda c: 4 + RNG.uniform(-3, 3), geo_labels)
+    docs["tour_dem_tttot"] = jsonstat(
+        "Trips", {"freq": ["A"], "c_dest": ["WORLD", "DOM", "FOR"], "purpose": ["TOTAL"], "duration": ["N_GE1"],
+                  "unit": ["NR"], "geo": list(COUNTRIES), "time": years},
+        lambda c: 1e6 * COUNTRIES[c["geo"]] * level(int(c["time"]), 7) * {"WORLD": 30, "DOM": 20, "FOR": 10}[c["c_dest"]])
+    docs["tour_dem_extot"] = jsonstat(
+        "Trip spending", {"freq": ["A"], "purpose": ["TOTAL"], "duration": ["N_GE1"], "c_dest": ["DOM", "FOR"],
+                          "expend": ["TOTXDUR"], "statinfo": ["TOTAL", "AVG_TRP", "AVG_NGT"], "unit": ["EUR"],
+                          "geo": list(COUNTRIES), "time": years},
+        lambda c: {"TOTAL": 1e9 * COUNTRIES[c["geo"]] * level(int(c["time"]), 7), "AVG_TRP": 900, "AVG_NGT": 110}[c["statinfo"]])
+
+    # Routes: each reporting country's dataset lists its airports' pairs.
+    route_docs = []
+    partners = ["DE_EDDF", "DE_EDDM", "UK_EGKK", "UK_EGLL", "FR_LFPG", "NL_EHAM", "IT_LIRF", "ES_LEMD"]
+    for airport in [a for a in airports if a[:2] in ("ES", "EL", "PT")]:
+        pairs = [f"{airport}_{p}" for p in partners if p != airport]
+        names = {pr: f"{pr.split('_')[1]} airport - {pr.split('_')[3]} airport" for pr in pairs}
+        route_docs.append(jsonstat(
+            "Routes", {"freq": ["M"], "unit": ["PAS"], "tra_meas": ["PAS_CRD"], "airp_pr": pairs,
+                       "time": months("2023-01", "2026-06")},
+            lambda c: nights_cache[(c["airp_pr"][:2], c["time"])] * RNG.uniform(0.002, 0.03), names))
+    docs["avia_par"] = route_docs
     return docs
+
+
+def weather_files() -> dict[str, dict]:
+    import csv as _csv
+    out = {}
+    with open(config.WEATHER_LOCATIONS, newline="", encoding="utf-8") as f:
+        locations = list(_csv.DictReader(f))[:6]
+    for loc in locations:
+        lat = float(loc["latitude"])
+        for year in range(2022, 2027):
+            start = date(year, 1, 1)
+            end = date(year, 12, 31) if year < 2026 else date(2026, 11, 3)
+            days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+            base = 30 - 0.35 * lat
+            temp = [round(base + 9 * math.cos((d.timetuple().tm_yday - 200) / 365 * 2 * math.pi) + RNG.gauss(0, 1.5), 1)
+                    for d in days]
+            out[f"{loc['location_code']}_{year}"] = {
+                "latitude": lat, "longitude": float(loc["longitude"]), "location_code": loc["location_code"],
+                "daily": {"time": [d.isoformat() for d in days], "temperature_2m_mean": temp,
+                          "temperature_2m_max": [t + 5 for t in temp],
+                          "precipitation_sum": [round(max(0, RNG.gauss(0.5, 3)), 1) for _ in days],
+                          "sunshine_duration": [round(max(0, RNG.gauss(30000, 9000))) for _ in days]}}
+    return out
+
+
+def oecd_csvs() -> dict[str, str]:
+    out = {}
+    areas = {"DEU": "Germany", "GBR": "United Kingdom", "USA": "United States", "FRA": "France", "CHN": "China",
+             "NLD": "Netherlands", "ITA": "Italy", "ESP": "Spain"}
+    for name, measure in (("oecd_cli", "LI"), ("oecd_cci", "CCICP")):
+        rows = ["STRUCTURE,STRUCTURE_ID,REF_AREA,Reference area,MEASURE,TIME_PERIOD,OBS_VALUE"]
+        for iso3, label in areas.items():
+            for i, ym in enumerate(months("2015-01", "2026-09")):
+                v = 100 + 1.5 * math.sin(i / 9 + len(iso3)) + RNG.uniform(-0.2, 0.2)
+                rows.append(f"DATAFLOW,OECD.SDD.STES:DSD_STES@DF_CLI(4.1),{iso3},{label},{measure},{ym},{v:.3f}")
+        out[name] = "\n".join(rows) + "\n"
+    return out
 
 
 def ecb_csvs() -> dict[str, str]:
@@ -329,6 +394,35 @@ def main(out_dir: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(series, ensure_ascii=False), encoding="utf-8")
         manifest[f"ine.{name}"] = {"status": "ok", "code": name, "description": "SYNTHETIC fixture", "url": "synthetic"}
+    for name, text in oecd_csvs().items():
+        path = root / "oecd" / f"{name}.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        manifest[f"oecd.{name}"] = {"status": "ok", "code": name, "description": "SYNTHETIC fixture", "url": "synthetic"}
+    regions = {"11": "Norte", "19": "Centro", "1A": "Grande Lisboa", "15": "Algarve", "30": "Região Autónoma da Madeira",
+               "PT": "Portugal"}
+    types = {"T": "Total", "01": "Hotels and similar", "0101": "Hotels"}
+    for name in ("lodging_income", "nights"):
+        for ym in months("2022-01", "2026-09"):
+            period = f"S3A{ym.replace('-', '')}"
+            cells = []
+            for geocod, geodsg in regions.items():
+                for t, tdesc in types.items():
+                    nights = 1e5 * (6 if geocod == "PT" else 1) * season(int(ym[5:]), 0.5) * (1 if t == "T" else 0.7)
+                    price = 75 * season(int(ym[5:]), 0.3) * (1 + 0.05 * (int(ym[:4]) - 2022))
+                    val = nights if name == "nights" else nights * price
+                    cells.append({"geocod": geocod, "geodsg": geodsg, "dim_3": t, "dim_3_t": tdesc,
+                                  "ind_string": f"{val:.0f}", "valor": f"{val:.0f}"})
+            path = root / "inept" / name / f"{period}.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"period": period, "Dados": {ym: cells}}, ensure_ascii=False), encoding="utf-8")
+        manifest[f"inept.{name}"] = {"status": "ok", "code": name, "description": "SYNTHETIC fixture", "url": "synthetic"}
+    for name, payload in weather_files().items():
+        path = root / "openmeteo" / f"{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    manifest["openmeteo.weather"] = {"status": "ok", "code": "weather", "description": "SYNTHETIC fixture",
+                                     "url": "synthetic"}
     for name, fc in geojson().items():
         path = root / "gisco" / f"{name}.geojson"
         path.parent.mkdir(parents=True, exist_ok=True)

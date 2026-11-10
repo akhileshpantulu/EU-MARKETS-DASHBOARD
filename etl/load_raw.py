@@ -86,6 +86,24 @@ def ecb_tables(raw_dir: Path) -> dict[str, pd.DataFrame]:
     return tables
 
 
+OECD_COLUMNS = ["ref_area", "reference_area", "time_period", "obs_value"]
+
+
+def oecd_tables(raw_dir: Path) -> dict[str, pd.DataFrame]:
+    tables = {}
+    for name in config.OECD_SERIES:
+        path = raw_dir / "oecd" / f"{name}.csv"
+        if path.exists():
+            df = pd.read_csv(StringIO(path.read_text(encoding="utf-8")), dtype=str)
+            df.columns = [snake(c) for c in df.columns]
+            df = df[[c for c in OECD_COLUMNS if c in df.columns]].copy()
+            df["obs_value"] = pd.to_numeric(df["obs_value"], errors="coerce")
+        else:
+            df = pd.DataFrame()
+        tables[name] = ensure_columns(df, OECD_COLUMNS, numeric={"obs_value"})[OECD_COLUMNS]
+    return tables
+
+
 def ine_tables(raw_dir: Path) -> dict[str, pd.DataFrame]:
     tables = {}
     for name in config.INE_TABLES:
@@ -95,6 +113,44 @@ def ine_tables(raw_dir: Path) -> dict[str, pd.DataFrame]:
         df = ensure_columns(df, INE_COLUMNS, numeric={"value", "year", "month"})
         tables[f"ine_{name}"] = df[INE_COLUMNS]
     return tables
+
+
+INEPT_COLUMNS = ["indicator", "period", "geocod", "geodsg", "dim_3", "dim_3_t", "valor", "sinal_conv"]
+
+
+def inept_table(raw_dir: Path) -> pd.DataFrame:
+    """Statistics Portugal monthly files -> one long table (period S3Ayyyymm)."""
+    rows = []
+    for name in config.INEPT_INDICATORS:
+        for path in sorted((raw_dir / "inept" / name).glob("*.json")):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            for _label, cells in (payload.get("Dados") or {}).items():
+                for cell in cells:
+                    rows.append({"indicator": name, "period": payload.get("period") or path.stem,
+                                 **{c: cell.get(c) for c in INEPT_COLUMNS[2:]}})
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
+    return ensure_columns(df, INEPT_COLUMNS, numeric={"valor"})[INEPT_COLUMNS]
+
+
+WEATHER_COLUMNS = ["location_code", "date", "temperature_2m_mean", "temperature_2m_max",
+                   "precipitation_sum", "sunshine_duration"]
+
+
+def weather_table(raw_dir: Path) -> pd.DataFrame:
+    frames = []
+    for path in sorted((raw_dir / "openmeteo").glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        daily = payload.get("daily") or {}
+        if not daily.get("time"):
+            continue
+        df = pd.DataFrame(daily).rename(columns={"time": "date"})
+        df.insert(0, "location_code", payload.get("location_code") or path.stem.split("_")[0])
+        frames.append(df)
+    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    df = ensure_columns(df, WEATHER_COLUMNS, numeric=set(WEATHER_COLUMNS[2:]))
+    return df[WEATHER_COLUMNS]
 
 
 def manifest_table(raw_dir: Path) -> pd.DataFrame:
@@ -110,7 +166,10 @@ def sources(raw_dir: Path) -> dict[str, pd.DataFrame]:
         **eurostat,
         "eurostat_labels": labels,
         **ecb_tables(raw_dir),
+        **oecd_tables(raw_dir),
         **ine_tables(raw_dir),
+        "openmeteo_daily": weather_table(raw_dir),
+        "inept_accommodation_monthly": inept_table(raw_dir),
         "source_manifest": manifest_table(raw_dir),
     }
 

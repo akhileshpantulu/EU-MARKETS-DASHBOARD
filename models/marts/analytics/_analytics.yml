@@ -70,3 +70,37 @@ models:
     columns:
       - name: source_key
         tests: [unique, not_null]
+
+  - name: mart_weather_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [location_code, date_key]}
+
+  - name: mart_market_demand_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [market_code, date_key]}
+
+  - name: mart_market_demand_scorecard
+    columns:
+      - name: market_code
+        tests: [unique, not_null]
+
+  - name: mart_airport_summary
+    columns:
+      - name: airport_code
+        tests: [unique, not_null]
+
+  - name: mart_airport_origins
+    tests:
+      - unique_combination: {combination_of_columns: [airport_code, partner_country_code, year]}
+    columns:
+      - name: share_of_airport
+        tests:
+          - between: {min_value: 0, max_value: 1}
+
+  - name: mart_airport_routes
+    tests:
+      - unique_combination: {combination_of_columns: [airport_code, partner_airport_code, year]}
+
+  - name: mart_portugal_prices_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [region_code, accommodation_type_code, date_key]}

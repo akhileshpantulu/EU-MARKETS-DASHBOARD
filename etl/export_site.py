@@ -22,6 +22,9 @@ from etl import config
 from etl.load_raw import DEFAULT_DB
 
 MONTH = "strftime(month_start, '%Y-%m') as month"
+# Airports shown on the site: curated ones plus any with 100k+ passengers in their last twelve months.
+AIRPORTS_SHOWN = """select airport_code from analytics.mart_airport_summary
+                    where is_curated or passengers_12m >= 100000"""
 
 TABLES = {
     "country_monthly": f"""
@@ -57,10 +60,54 @@ TABLES = {
         select geo_code, partner_code, year, nights, share_of_foreign_nights, nights_yoy,
                nights_vs_baseline, market_rank
         from analytics.mart_source_markets order by geo_code, year, market_rank""",
-    "airports_monthly": """
+    "airports_monthly": f"""
         select f.airport_code, strftime(d.month_start, '%Y-%m') as month, f.passengers
         from core.fact_airport_passengers_monthly as f join core.dim_date as d using (date_key)
+        where d.year >= 2019 and f.airport_code in ({AIRPORTS_SHOWN})
         order by 1, 2""",
+    "airport_summary": f"""
+        select airport_code, iata_code, airport_name, city, country_code, country_name, latitude, longitude,
+               is_curated, strftime(last_month, '%Y-%m') as last_month, passengers_last_month, last_month_yoy,
+               passengers_12m, passengers_12m_yoy, passengers_12m_vs_baseline, route_count
+        from analytics.mart_airport_summary
+        where airport_code in ({AIRPORTS_SHOWN})
+        order by passengers_12m desc nulls last""",
+    "airport_origins": f"""
+        select airport_code, partner_country_code, partner_country_name, year, passengers, share_of_airport,
+               passengers_yoy
+        from analytics.mart_airport_origins
+        where country_rank <= 25 and airport_code in ({AIRPORTS_SHOWN})
+        order by airport_code, year, passengers desc""",
+    "airport_routes": f"""
+        select airport_code, partner_airport_code, partner_airport_name, partner_country_name, year, passengers,
+               passengers_yoy, route_rank
+        from analytics.mart_airport_routes
+        where airport_code in ({AIRPORTS_SHOWN})
+        order by airport_code, year, route_rank""",
+    "weather_monthly": f"""
+        select location_code, {MONTH}, avg_temp_c, avg_max_temp_c, precipitation_mm, rainy_days, sunshine_hours,
+               normal_years, normal_max_temp_c, normal_precipitation_mm, normal_sunshine_hours,
+               temp_anomaly_c, sunshine_anomaly_hours, precipitation_vs_normal
+        from analytics.mart_weather_monthly order by location_code, month_start""",
+    "market_demand_monthly": f"""
+        select market_code, {MONTH}, oecd_cli, oecd_consumer_confidence, retail_volume_index, retail_volume_yoy,
+               ec_consumer_confidence_balance, unemployment_rate_pct
+        from analytics.mart_market_demand_monthly where year >= 2018 order by market_code, month_start""",
+    "market_scorecard": """
+        select * exclude (cli_key, cci_key, ec_key, retail_key, unemp_key),
+               cli_key, retail_key, strftime(house_prices_quarter, '%Y-%m') as house_prices_quarter_start
+        from analytics.mart_market_demand_scorecard order by market_code""",
+    "house_prices_quarterly": """
+        select market_code, strftime(quarter_start, '%Y-%m') as quarter_start, house_prices_yoy_pct
+        from core.fact_house_prices_quarterly where quarter_start >= date '2018-01-01' order by 1, 2""",
+    "resident_travel_annual": """
+        select market_code, year, trips_abroad, trips_domestic, spend_abroad_eur, spend_per_trip_abroad_eur,
+               spend_per_night_abroad_eur
+        from core.fact_resident_travel_annual order by 1, 2""",
+    "portugal_prices_monthly": f"""
+        select region_code, region_name, accommodation_type_code, {MONTH}, lodging_income_eur, nights,
+               revenue_per_night_eur, revenue_per_night_yoy, nights_yoy
+        from analytics.mart_portugal_prices_monthly order by region_code, accommodation_type_code, month_start""",
     "fx_daily": """
         select currency_code, strftime(rate_date, '%Y-%m-%d') as date, units_per_eur
         from core.fact_fx_rates
@@ -89,7 +136,9 @@ DIMENSIONS = {
     "geos": """select geo_code, geo_name, geo_level, country_code, is_eu27, is_euro_area, currency_code,
                       region_group, sort_order from core.dim_geo order by geo_level, sort_order, geo_code""",
     "partners": "select partner_code, partner_name, is_country from core.dim_partner order by partner_code",
-    "airports": "select * from core.dim_airport order by airport_code",
+    "airports": "select * from core.dim_airport where is_curated order by airport_code",
+    "markets": "select * from core.dim_market order by market_code",
+    "weather_locations": "select * from core.dim_weather_location order by location_name",
     "currencies": "select * from core.dim_currency order by currency_code",
     "rate_series": "select * from reference.interest_rate_series order by sort_order",
     "zones": "select zone_key, zone_label, zone_name, region_name from core.dim_spain_zone order by zone_label",

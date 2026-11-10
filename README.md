@@ -9,8 +9,8 @@
 short-stay rentals, air traffic and prices behave across European markets, and what is
 the macro and rates backdrop?
 
-A star-schema data warehouse built on public APIs (18 Eurostat datasets, the ECB Data
-Portal and INE), modelled with **DuckDB + dbt**, refreshed daily by **GitHub Actions** and
+A star-schema data warehouse built on public APIs (24 Eurostat datasets plus 30 per-country
+route datasets, the ECB Data Portal, the OECD, Open-Meteo, INE Spain and Statistics Portugal), modelled with **DuckDB + dbt**, refreshed daily by **GitHub Actions** and
 published as a static **GitHub Pages** site. No server: the site is HTML, JavaScript and
 JSON files.
 
@@ -24,9 +24,9 @@ market Eurostat covers, adds 15 more sources and replaces Streamlit with a stati
 
 | | balearic-tourism-dw | EU Markets Dashboard |
 |---|---|---|
-| Geography | 3 Balearic islands | 27 EU countries, EFTA and candidates, EU totals, ~240 NUTS 2 regions, 58 main airports |
-| Sources | INE EOH/IRSH, IBESTAT, Eurostat `avia_paoa` | 18 Eurostat datasets, 5 ECB series, INE IRSH (all Spanish zones), GISCO boundaries |
-| Frontend | Streamlit app | Static site on GitHub Pages (ECharts), 12 tabs, light and dark |
+| Geography | 3 Balearic islands | 27 EU countries, EFTA and candidates, EU totals, ~240 NUTS 2 regions, every reporting airport |
+| Sources | INE EOH/IRSH, IBESTAT, Eurostat `avia_paoa` | Eurostat (tourism, air routes, prices, macro, household demand), ECB, OECD, Open-Meteo, INE Spain, Statistics Portugal, GISCO |
+| Frontend | Streamlit app | Static site on GitHub Pages (ECharts), 14 tabs, light and dark |
 | Refresh | Manual | Daily GitHub Actions run, plus live ECB / Eurostat calls from the browser |
 | Resilience | n/a | Per-source fallbacks; a failed source keeps its last file and the build continues |
 
@@ -41,10 +41,12 @@ market Eurostat covers, adds 15 more sources and replaces Streamlit with a stati
 | Regions | NUTS 2 map and table: nights, growth, vs 2019, foreign share, platform share, seasonality |
 | Source markets | Top origin markets for a destination, growth vs 2019, and where a given origin market travels |
 | Short-stay rentals | Airbnb / Booking / Expedia nights vs tourist accommodation, platform share by country and region |
-| Air traffic | Passengers by country, YoY, bubble map and table of main airports (trailing 12 months) |
+| Air traffic | Passengers by country; filter to any airport for its monthly traffic, trailing 12 months, vs 2019, origin countries and top routes |
 | Prices & macro | HICP accommodation and restaurants vs headline, GDP, unemployment, consumer confidence, bond yields |
+| Market demand | Demand health of a destination's top source markets: OECD leading indicator and confidence, retail sales, house prices, unemployment, trips and spending abroad, FX |
+| Weather | Monthly temperature, sunshine and rain for 37 destinations against the normal |
 | Rates & FX | ECB deposit rate, EUR STR, Euribor 3M, 10-year AAA yield and 14 euro FX pairs, loaded live from the ECB |
-| Spain hotels | INE ADR, RevPAR and implied occupancy for every Spanish tourist zone |
+| Hotel prices | Spain: INE ADR, RevPAR and occupancy by tourist zone. Portugal: revenue per guest night by region |
 | Data | Source status and freshness, CSV downloads of every mart, definitions |
 
 One filter row above each tab scopes every chart on it; the selected market carries across
@@ -64,17 +66,26 @@ All monthly sources are requested from January 2015. See
 | Source markets | Eurostat | `tour_occ_ninraw` | destination x guest country of residence x year |
 | Regions | Eurostat | `tour_occ_nin2`, `tour_occ_nin2m` | NUTS 2 x year; NUTS 2 x month (from 2020) |
 | Short-stay rentals | Eurostat (experimental) | `tour_ce_omn12` | country / NUTS 2 x month |
-| Air | Eurostat | `avia_paoc`, `avia_paoa` | country x month x domestic / international; airport x month |
+| Air | Eurostat | `avia_paoc`, `avia_paoa` | country x month x domestic / international; every reporting airport x month |
+| Air routes | Eurostat | `avia_par_<country>` (30 datasets) | airport pair x month, from 2023 (Eurostat publishes with a long lag) |
 | Prices | Eurostat | `prc_hicp_minr` (ECOICOP 2), fallback `prc_hicp_manr` | country x month: all items, restaurants, accommodation |
 | Activity | Eurostat | `sts_setu_m` | accommodation (I55) and food service (I56) turnover index |
 | Macro | Eurostat | `une_rt_m`, `ei_bsco_m`, `namq_10_gdp`, `irt_lt_mcby_m`, `demo_gind` | unemployment, consumer confidence, GDP, bond yields, population |
+| Household demand | Eurostat | `sts_trtu_m`, `prc_hpi_q`, `tour_dem_tttot`, `tour_dem_extot` | retail volume, house prices, residents' trips and spending abroad |
+| Source-market outlook | OECD | `DF_CLI` (LI, CCICP) | leading indicator and consumer confidence, incl. UK, US, China, Japan |
+| Weather | Open-Meteo | ERA5 archive | 37 destinations x day, aggregated to months; backfilled over the first runs |
 | FX | Eurostat + ECB | `ert_bil_eur_m`, ECB `EXR` | monthly averages since 2015; daily reference rates |
 | Rates | ECB | `FM` (DFR, Euribor 3M), `EST` (EUR STR), `YC` (AAA 10Y) | daily / monthly |
 | Hotel prices | INE (Spain) | IRSH tables 46297, 46300 | Spanish tourist zone x month: ADR, RevPAR |
+| Hotel prices | Statistics Portugal | indicators 0012091, 0012092 | NUTS 2 region x type x month: lodging income, nights |
 | Maps | Eurostat GISCO | NUTS 2024 / 2021 boundaries, 1:60M | countries, NUTS 2 |
 
-Eurostat publishes no hotel prices, so INE's IRSH survey is the price layer for Spain. Other
-national statistics offices with ADR / RevPAR series can be added the same way.
+Eurostat publishes no hotel prices, so national offices are the price layer: INE's IRSH survey
+for Spain (ADR, RevPAR) and Statistics Portugal (revenue per guest night; it publishes no RevPAR
+or ADR series). Other offices can be added the same way.
+
+`scripts/probe_apis.py` (the **Probe APIs** workflow) prints the shape of each API response;
+it is how the codes for new sources were checked.
 
 ## How it works
 

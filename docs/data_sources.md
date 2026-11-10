@@ -77,3 +77,17 @@ high season. Some zones were redefined over time (for example *Costa Barcelona 2
 `https://gisco-services.ec.europa.eu/distribution/v2/nuts/geojson/`. The export keeps the
 NUTS version that matches more region codes in the data, rounds coordinates to three
 decimals, and the site trims overseas territories from the map frame.
+
+## Added sources
+
+| Raw table | Source | Requested | Notes |
+|---|---|---|---|
+| `eurostat_avia_paoa` | Eurostat `avia_paoa` | every reporting airport (curated list as fallback) | 873 airports listed, ~220 report monthly |
+| `eurostat_avia_par` | Eurostat `avia_par_<cc>`, 30 countries | unit PAS, tra_meas PAS_CRD, from 2023 | `airp_pr` = `ES_LEPA_DE_EDDF`; labels "PALMA DE MALLORCA airport - FRANKFURT/MAIN airport". Monthly route data ended at December 2024 when checked in November 2026 |
+| `eurostat_sts_trtu_m` | Eurostat | VOL_SLS, G47, SCA, I21 | retail volume |
+| `eurostat_prc_hpi_q` | Eurostat | purchase TOTAL, RCH_A | house prices, annual rate |
+| `eurostat_tour_dem_tttot` | Eurostat | c_dest WORLD / DOM / FOR, purpose TOTAL, N_GE1 | trips by residents |
+| `eurostat_tour_dem_extot` | Eurostat | c_dest DOM / FOR, TOTXDUR, statinfo TOTAL / AVG_TRP / AVG_NGT | spending by residents |
+| `oecd_cli`, `oecd_cci` | OECD SDMX `DSD_STES@DF_CLI,4.1` | `.M.LI...` and `.M.CCICP...`, csvfilewithlabels | ISO3 areas mapped in `seeds/oecd_area.csv` |
+| `openmeteo_daily` | Open-Meteo archive (ERA5) | daily mean / max temperature, precipitation, sunshine | one request per location-year; 90 past location-years per run until 2016 is reached |
+| `inept_accommodation_monthly` | Statistics Portugal `0012091`, `0012092` | one request per month (`Dim1=S3A<yyyymm>`), last four months re-fetched | geocod `1A` = NUTS 2024 `PT1A`; confidential cells have no `valor` |

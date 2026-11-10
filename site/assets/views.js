@@ -15,10 +15,18 @@ function grid(...cards) {
 }
 
 function tile(label, value, sub, badge) {
+  const html = typeof value === "string" && value.startsWith("<");
   return h("div", { class: "tile" },
     h("div", { class: "label", html: `${label}${badge ? ` <span class="badge ${badge.cls}">${badge.text}</span>` : ""}` }),
-    h("div", { class: "value" }, value),
+    html ? h("div", { class: "value", html: value }) : h("div", { class: "value" }, value),
     h("div", { class: "sub", html: sub || "&nbsp;" }));
+}
+
+/** +1.2°C / −0.4°C / 0.0°C (no negative zero). */
+function signed(v, digits, unit = "") {
+  if (!isNum(v)) return "n/a";
+  const r = Number(v.toFixed(digits));
+  return `${r > 0 ? "+" : r < 0 ? "−" : ""}${Math.abs(r).toFixed(digits)}${unit}`;
 }
 
 function geoSelect(ctx, { countriesOnly = false, label = "Market" } = {}) {
@@ -424,9 +432,21 @@ export async function rentals(ctx) {
 
 // ------------------------------------------------------------------------- air
 export async function air(ctx) {
-  const [monthly, airports] = await Promise.all([loadTable("country_monthly"), loadTable("airports_monthly")]);
+  const [monthly, airportsMonthly, summary] = await Promise.all([
+    loadTable("country_monthly"), loadTable("airports_monthly"), loadTable("airport_summary")]);
   const g = ctx.state.geo;
-  ctx.filters.append(geoSelect(ctx));
+  const inScope = (a) => (ctx.isCountry(g) ? a.country_code === g : true);
+  const scoped = summary.filter(inScope);
+  const airport = summary.find((a) => a.airport_code === ctx.state.airport && inScope(a)) ? ctx.state.airport : "";
+  const label = (a) => `${a.city && a.iata_code ? `${a.city} (${a.iata_code})` : a.airport_name}${ctx.isCountry(g) ? "" : `, ${a.country_name}`}`;
+  ctx.filters.append(
+    geoSelect(ctx),
+    select("Airport", [{ value: "", label: ctx.isCountry(g) ? `All airports in ${ctx.geoName(g)}` : "All airports" },
+      ...scoped.map((a) => ({ value: a.airport_code, label: label(a) }))], airport,
+    (v) => ctx.setState({ airport: v || null })),
+  );
+  if (airport) return airportView(ctx, summary.find((a) => a.airport_code === airport), airportsMonthly);
+
   const rows = monthly.filter((r) => r.geo_code === g && isNum(r.air_passengers));
   const p = palette();
   const c1 = card({ title: "Air passengers", span: 7, note: "Passengers carried (arrivals plus departures), all flights and international flights.",
@@ -434,45 +454,84 @@ export async function air(ctx) {
     table: () => ({ columns: ["Month", "Passengers", "International", "YoY"], rows: rows.map((r) => [r.month, r.air_passengers, r.air_passengers_international, r.air_passengers_yoy]) }) });
   const recent = rows.slice(-36);
   const c2 = card({ title: "Passengers: change on a year earlier", span: 5, table: () => ({ columns: ["Month", "YoY"], rows: recent.map((r) => [r.month, r.air_passengers_yoy]) }) });
-
-  const ap = new Map(ctx.meta.airports.map((a) => [a.airport_code, a]));
-  const byAp = groupBy(airports, "airport_code");
-  const latestAll = airports.reduce((m, r) => (r.month > m ? r.month : m), "");
-  const summary = [];
-  for (const [code, list] of byAp) {
-    const meta = ap.get(code);
-    if (!meta) continue;
-    const last = list.at(-1);
-    const idx = new Map(list.map((r) => [r.month, r.passengers]));
-    const prevMonth = `${Number(last.month.slice(0, 4)) - 1}${last.month.slice(4)}`;
-    const t12 = list.slice(-12);
-    const t12prev = list.filter((r) => r.month <= prevMonth).slice(-12);
-    const sum = (a) => (a.length === 12 ? a.reduce((s, r) => s + r.passengers, 0) : null);
-    summary.push({
-      airport_code: code, name: `${meta.city} (${meta.iata_code})`, country: meta.country_name, lat: meta.latitude, lon: meta.longitude,
-      month: last.month, passengers: last.passengers,
-      yoy: idx.has(prevMonth) ? last.passengers / idx.get(prevMonth) - 1 : null,
-      t12: sum(t12), t12_yoy: sum(t12) && sum(t12prev) ? sum(t12) / sum(t12prev) - 1 : null,
-    });
-  }
+  const mapped = scoped.filter((a) => isNum(a.latitude) && isNum(a.passengers_12m));
   const c3 = card({ title: "Main airports, trailing twelve months", span: 7, height: "map",
-    note: `Bubble area is proportional to passengers in the twelve months to each airport's latest month (most recent: ${fmtMonth(latestAll)}).`,
-    table: () => ({ columns: ["Airport", "Country", "Trailing 12m", "12m YoY"], rows: summary.map((r) => [r.name, r.country, r.t12, r.t12_yoy]) }) });
+    note: "Bubble area is proportional to passengers in the twelve months to each airport's latest month. Map shows the airports with coordinates; the table lists every airport with 100k+ passengers.",
+    table: () => ({ columns: ["Airport", "Country", "Trailing 12m", "12m YoY"], rows: mapped.map((r) => [label(r), r.country_name, r.passengers_12m, r.passengers_12m_yoy]) }) });
+  const base = ctx.meta.baseline_year;
   const cols = [
-    { key: "name", label: "Airport", text: true }, { key: "country", label: "Country", text: true },
-    { key: "month", label: "Latest", fmt: fmtMonth }, { key: "passengers", label: "Passengers", fmt: (v) => fmtNum(v) },
-    { key: "yoy", label: "YoY", fmt: (v) => deltaHTML(v) }, { key: "t12", label: "Trailing 12m", fmt: (v) => fmtNum(v) },
-    { key: "t12_yoy", label: "12m YoY", fmt: (v) => deltaHTML(v) },
+    { key: "name", label: "Airport", text: true }, { key: "country_name", label: "Country", text: true },
+    { key: "last_month", label: "Latest", fmt: fmtMonth }, { key: "passengers_last_month", label: "Passengers", fmt: (v) => fmtNum(v) },
+    { key: "last_month_yoy", label: "YoY", fmt: (v) => deltaHTML(v) }, { key: "passengers_12m", label: "Trailing 12m", fmt: (v) => fmtNum(v) },
+    { key: "passengers_12m_yoy", label: "12m YoY", fmt: (v) => deltaHTML(v) },
+    { key: "passengers_12m_vs_baseline", label: `vs ${base}`, fmt: (v) => deltaHTML(v) },
   ];
-  const c4 = card({ title: "Airports", span: 5, csvName: "airports",
-    table: () => ({ columns: cols.map((c) => c.label), rows: summary.map((r) => cols.map((c) => r[c.key])) }) });
-  c4.chartEl.replaceWith(dataTable(cols, summary, { initialSort: { key: "t12", dir: "desc" } }));
+  const tableRows = scoped.map((a) => ({ ...a, name: label(a) }));
+  const c4 = card({ title: `Airports (${tableRows.length})`, span: 5, csvName: "airports", note: "Click an airport for its traffic and routes.",
+    table: () => ({ columns: cols.map((c) => c.label), rows: tableRows.map((r) => cols.map((c) => r[c.key])) }) });
+  c4.chartEl.replaceWith(dataTable(cols, tableRows, { initialSort: { key: "passengers_12m", dir: "desc" },
+    onRowClick: (r) => ctx.setState({ airport: r.airport_code }) }));
   ctx.view.append(grid(c1, c2, c3, c4));
   timeChart(c1.chartEl, { zoom: true, yFormat: (v) => fmtNum(v, 0), series: [
     { name: "All flights", data: rows.map((r) => [r.month, r.air_passengers]) },
     { name: "International", data: rows.map((r) => [r.month, r.air_passengers_international]) }] });
   timeChart(c2.chartEl, { markZero: true, yFormat: (v) => fmtChange(v, { digits: 0 }), series: [{ name: "YoY", type: "bar", data: recent.map((r) => [r.month, r.air_passengers_yoy]) }] });
-  bubbleMap(c3.chartEl, { geojson: await geo(ctx, "countries"), points: summary.filter((r) => r.t12).map((r) => ({ name: r.name, lon: r.lon, lat: r.lat, value: r.t12 })), format: (v) => fmtNum(v) });
+  bubbleMap(c3.chartEl, { geojson: await geo(ctx, "countries"), points: mapped.map((r) => ({ name: label(r), lon: r.longitude, lat: r.latitude, value: r.passengers_12m })), format: (v) => fmtNum(v) });
+}
+
+async function airportView(ctx, a, airportsMonthly) {
+  const [origins, routes] = await Promise.all([loadTable("airport_origins"), loadTable("airport_routes")]);
+  const p = palette();
+  const base = ctx.meta.baseline_year;
+  const name = a.city && a.iata_code ? `${a.city} (${a.iata_code})` : a.airport_name;
+  const series = airportsMonthly.filter((r) => r.airport_code === a.airport_code);
+  const idx = new Map(series.map((r) => [r.month, r.passengers]));
+  const withYoy = series.map((r) => {
+    const prev = idx.get(`${Number(r.month.slice(0, 4)) - 1}${r.month.slice(4)}`);
+    return { ...r, yoy: isNum(prev) && prev ? r.passengers / prev - 1 : null };
+  });
+  const lastYear = series.length ? Number(series.at(-1).month.slice(0, 4)) : null;
+  const tiles = h("div", { class: "tiles" },
+    tile(`Passengers, ${fmtMonth(a.last_month)}`, fmtNum(a.passengers_last_month), `${deltaHTML(a.last_month_yoy)} vs a year earlier`),
+    tile("Trailing twelve months", fmtNum(a.passengers_12m), `${deltaHTML(a.passengers_12m_yoy)} vs prior 12 months`),
+    tile(`Versus ${base}`, deltaHTML(a.passengers_12m_vs_baseline), `trailing 12 months vs calendar ${base}`),
+    tile("Routes reported", isNum(a.route_count) ? fmtInt(a.route_count) : "n/a", "partner airports in Eurostat route data"),
+  );
+  const c1 = card({ title: `Monthly passengers: ${name}`, span: 7, note: "Passengers carried (arrivals plus departures), Eurostat avia_paoa.",
+    legend: [{ label: String(lastYear), color: p.series[0] }, { label: String(lastYear - 1), color: p.series[1] }, { label: String(base), color: p.context }],
+    table: () => ({ columns: ["Month", "Passengers", "YoY"], rows: withYoy.map((r) => [r.month, r.passengers, r.yoy]) }) });
+  const recent = withYoy.slice(-36);
+  const c2 = card({ title: "Change on a year earlier", span: 5, table: () => ({ columns: ["Month", "YoY"], rows: recent.map((r) => [r.month, r.yoy]) }) });
+
+  const og = origins.filter((r) => r.airport_code === a.airport_code);
+  const years = [...new Set(og.map((r) => r.year))].sort((x, y) => y - x);
+  const ry = years[0];
+  const latestOrigins = og.filter((r) => r.year === ry).slice(0, 15);
+  const routeNote = ry ? `Eurostat route data (airport pairs), full year ${ry}, the latest year Eurostat has published for this airport. Passengers flying between ${name} and each country, both directions.`
+    : "Eurostat has not published route data for this airport.";
+  const c3 = card({ title: `Where passengers fly from: countries, ${ry ?? "n/a"}`, span: 6, note: routeNote,
+    table: () => ({ columns: ["Country", "Passengers", "Share", "YoY"], rows: og.filter((r) => r.year === ry).map((r) => [r.partner_country_name, r.passengers, r.share_of_airport, r.passengers_yoy]) }) });
+  const c4 = card({ title: `Growth by origin country, ${ry ? `${ry} vs ${ry - 1}` : "n/a"}`, span: 6, note: "Top 15 origin countries by passengers." });
+  const rt = routes.filter((r) => r.airport_code === a.airport_code && r.year === ry);
+  const rcols = [
+    { key: "route_rank", label: "#" }, { key: "partner_airport_name", label: "Airport", text: true },
+    { key: "partner_country_name", label: "Country", text: true }, { key: "passengers", label: "Passengers", fmt: (v) => fmtNum(v) },
+    { key: "passengers_yoy", label: "YoY", fmt: (v) => deltaHTML(v) },
+  ];
+  const c5 = card({ title: `Top routes, ${ry ?? "n/a"}`, span: 12, csvName: `routes-${a.airport_code}`,
+    table: () => ({ columns: rcols.map((c) => c.label), rows: rt.map((r) => rcols.map((c) => r[c.key])) }) });
+  if (rt.length) c5.chartEl.replaceWith(dataTable(rcols, rt, { initialSort: { key: "passengers", dir: "desc" } }));
+  else empty(c5.chartEl, "No route data for this airport.");
+
+  ctx.view.append(tiles, h("div", { style: "height:16px" }), grid(c1, c2, c3, c4, c5));
+  const yearSeries = (y, color, width) => ({ name: String(y), color, width,
+    data: series.filter((r) => r.month.startsWith(String(y))).map((r) => [r.month.slice(5), r.passengers]) });
+  timeChart(c1.chartEl, { categories: MONTH_KEYS, xFormat: (v) => monthName(+v), yFormat: (v) => fmtNum(v, 0),
+    series: [yearSeries(lastYear, p.series[0], 2.5), yearSeries(lastYear - 1, p.series[1]), yearSeries(base, p.context)] });
+  timeChart(c2.chartEl, { markZero: true, yFormat: (v) => fmtChange(v, { digits: 0 }), series: [{ name: "YoY", type: "bar", data: recent.map((r) => [r.month, r.yoy]) }] });
+  rankBars(c3.chartEl, { items: latestOrigins.map((r) => ({ label: r.partner_country_name, value: r.share_of_airport })), format: (v) => fmtPct(v, 1) });
+  rankBars(c4.chartEl, { items: latestOrigins.filter((r) => isNum(r.passengers_yoy)).map((r) => ({ label: r.partner_country_name, value: r.passengers_yoy })),
+    format: (v) => fmtChange(v), colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) });
 }
 
 // ----------------------------------------------------------------------- macro
@@ -599,6 +658,10 @@ export async function rates(ctx) {
 
 // ------------------------------------------------------------------- spain
 export async function spain(ctx) {
+  const pc = ctx.state.pc === "PT" ? "PT" : "ES";
+  ctx.filters.append(segmented("Country", [{ value: "ES", label: "Spain: ADR & RevPAR" }, { value: "PT", label: "Portugal: revenue per night" }],
+    pc, (v) => ctx.setState({ pc: v })));
+  if (pc === "PT") return portugal(ctx);
   const rows = await loadTable("spain_zones_monthly");
   const zones = new Map(ctx.meta.zones.map((z) => [z.zone_key, z]));
   const zname = (k) => { const z = zones.get(k); return z ? `${z.zone_name} (${z.region_name})` : k; };
@@ -645,6 +708,186 @@ export async function spain(ctx) {
     colorFn: (d, pal) => (d.code === zone ? pal.series[1] : d.value >= 0 ? pal.div[4] : pal.div[0]) });
 }
 
+async function portugal(ctx) {
+  const rows = await loadTable("portugal_prices_monthly");
+  const types = { T: "All tourist accommodation", "01": "Hotels and similar", "0101": "Hotels" };
+  const type = types[ctx.state.ptype] ? ctx.state.ptype : "01";
+  const regions = [...new Map(rows.map((r) => [r.region_code, r.region_name])).entries()]
+    .sort((a, b) => (a[0] === "PT" ? -1 : b[0] === "PT" ? 1 : a[1].localeCompare(b[1])));
+  const region = regions.some(([c]) => c === ctx.state.pregion) ? ctx.state.pregion : "PT";
+  ctx.filters.append(
+    select("Region", regions.map(([value, label]) => ({ value, label })), region, (v) => ctx.setState({ pregion: v })),
+    segmented("Type", Object.entries(types).map(([value, label]) => ({ value, label })), type, (v) => ctx.setState({ ptype: v })),
+  );
+  const t = rows.filter((r) => r.accommodation_type_code === type);
+  const series = t.filter((r) => r.region_code === region);
+  const latest = t.reduce((m, r) => (isNum(r.revenue_per_night_eur) && r.month > m ? r.month : m), "");
+  const latestRows = t.filter((r) => r.month === latest && r.region_code !== "PT").map((r) => ({ ...r }));
+  const p = palette();
+  const c1 = card({ title: `Revenue per guest night: ${regions.find(([c]) => c === region)?.[1]}`, span: 7, height: "tall",
+    note: `${types[type]}. Lodging income ÷ nights, euros. Statistics Portugal publishes no RevPAR or ADR series; this is a per-guest price proxy, so it is not comparable with Spain's per-room ADR.`,
+    legend: [{ label: "Revenue per night", color: p.series[0] }],
+    table: () => ({ columns: ["Month", "Revenue per night", "YoY", "Nights", "Lodging income"],
+      rows: series.map((r) => [r.month, r.revenue_per_night_eur, r.revenue_per_night_yoy, r.nights, r.lodging_income_eur]) }) });
+  const c2 = card({ title: `Change on a year earlier, ${fmtMonth(latest)}`, span: 5, note: "Revenue per guest night by region." });
+  const cols = [
+    { key: "region_name", label: "Region", text: true }, { key: "month", label: "Month", fmt: fmtMonth },
+    { key: "revenue_per_night_eur", label: "Revenue / night", fmt: fmtEur },
+    { key: "revenue_per_night_yoy", label: "YoY", fmt: (v) => deltaHTML(v) },
+    { key: "nights", label: "Nights", fmt: (v) => fmtNum(v) }, { key: "nights_yoy", label: "Nights YoY", fmt: (v) => deltaHTML(v) },
+  ];
+  const c3 = card({ title: `Portuguese regions, ${fmtMonth(latest)}`, span: 12, csvName: "portugal-regions",
+    note: "Statistics Portugal indicators 0012091 (lodging income) and 0012092 (nights), NUTS 2024 regions. Recent months are provisional.",
+    table: () => ({ columns: cols.map((c) => c.label), rows: latestRows.map((r) => cols.map((c) => r[c.key])) }) });
+  c3.chartEl.replaceWith(dataTable(cols, latestRows, { initialSort: { key: "revenue_per_night_eur", dir: "desc" },
+    highlight: (r) => r.region_code === region, onRowClick: (r) => ctx.setState({ pregion: r.region_code }) }));
+  ctx.view.append(grid(c1, c2, c3));
+  timeChart(c1.chartEl, { zoom: true, yFormat: (v) => fmtEur(v), series: [{ name: "Revenue per night", data: series.map((r) => [r.month, r.revenue_per_night_eur]) }] });
+  rankBars(c2.chartEl, { items: latestRows.filter((r) => isNum(r.revenue_per_night_yoy)).sort((a, b) => b.revenue_per_night_yoy - a.revenue_per_night_yoy)
+    .map((r) => ({ label: r.region_name, value: r.revenue_per_night_yoy, code: r.region_code })), format: (v) => fmtChange(v),
+    colorFn: (d, pal) => (d.code === region ? pal.series[1] : d.value >= 0 ? pal.div[4] : pal.div[0]) });
+}
+
+// -------------------------------------------------------------- market demand
+export async function demand(ctx) {
+  const [score, monthly, hpi, travel, sourceMarkets, fxMonthly] = await Promise.all([
+    loadTable("market_scorecard"), loadTable("market_demand_monthly"), loadTable("house_prices_quarterly"),
+    loadTable("resident_travel_annual"), loadTable("source_markets"), loadTable("fx_monthly")]);
+  const marketName = (c) => score.find((m) => m.market_code === c)?.market_name || ctx.geoName(c);
+  const dests = [...new Set(sourceMarkets.map((r) => r.geo_code))];
+  const dest = dests.includes(ctx.state.geo) ? ctx.state.geo : dests.includes("ES") ? "ES" : dests[0];
+  const smYear = Math.max(...sourceMarkets.filter((r) => r.geo_code === dest).map((r) => r.year));
+  const top = sourceMarkets.filter((r) => r.geo_code === dest && r.year === smYear).sort((a, b) => b.nights - a.nights).slice(0, 15);
+  const markets = score.map((m) => m.market_code);
+  const market = markets.includes(ctx.state.market) ? ctx.state.market : top.find((r) => markets.includes(r.partner_code))?.partner_code || "DE";
+  ctx.filters.append(
+    select("Destination", dests.map((c) => ({ value: c, label: ctx.geoName(c) })).sort((a, b) => a.label.localeCompare(b.label)), dest, (v) => ctx.setState({ geo: v })),
+    select("Source market", score.map((m) => ({ value: m.market_code, label: m.market_name })).sort((a, b) => a.label.localeCompare(b.label)),
+      market, (v) => ctx.setState({ market: v })),
+  );
+  // FX: change in the market's currency against the euro over 12 months (positive = euro stronger, travel to the euro area dearer).
+  const fx12 = (cur) => {
+    const l = fxMonthly.filter((r) => r.currency_code === cur);
+    if (l.length < 13) return null;
+    return l.at(-1).units_per_eur / l.at(-13).units_per_eur - 1;
+  };
+  const rows = top.map((r) => {
+    const s = score.find((m) => m.market_code === r.partner_code) || {};
+    return { code: r.partner_code, name: marketName(r.partner_code), share: r.share_of_foreign_nights, nights_yoy: r.nights_yoy, ...s,
+      fx_12m: s.currency_code && s.currency_code !== "EUR" ? fx12(s.currency_code) : null };
+  });
+  const arrow = (v, good = 0) => (isNum(v) ? `<span class="delta ${v > good ? "up" : v < good ? "down" : "flat"}">${v > good ? "▲" : v < good ? "▼" : "■"} ${v > 0 ? "+" : ""}${v.toFixed(1)}</span>` : "n/a");
+  const cols = [
+    { key: "name", label: "Market", text: true },
+    { key: "share", label: `Share ${smYear}`, fmt: (v) => fmtPct(v, 1) },
+    { key: "nights_yoy", label: "Nights YoY", fmt: (v) => deltaHTML(v) },
+    { key: "oecd_cli", label: "Leading ind.", fmt: (v) => fmtDec(v, 1) },
+    { key: "oecd_cli_change_3m", label: "LI 3m Δ", fmt: (v) => arrow(v) },
+    { key: "oecd_consumer_confidence_change_yoy", label: "Confidence Δ 1y", fmt: (v) => arrow(v) },
+    { key: "retail_volume_yoy", label: "Retail YoY", fmt: (v) => deltaHTML(v) },
+    { key: "unemployment_rate_pct", label: "Unemp.", fmt: (v) => fmtRate(v) },
+    { key: "house_prices_yoy_pct", label: "House prices", fmt: (v) => (isNum(v) ? deltaHTML(v / 100) : "n/a") },
+    { key: "trips_abroad_yoy", label: "Trips abroad YoY", fmt: (v) => deltaHTML(v) },
+    { key: "spend_abroad_yoy", label: "Spend abroad YoY", fmt: (v) => deltaHTML(v) },
+    { key: "fx_12m", label: "€ vs currency 1y", fmt: (v) => deltaHTML(v, { invert: true }) },
+  ];
+  const c0 = card({ title: `Demand health of ${ctx.geoName(dest)}'s top source markets`, span: 12, csvName: `market-health-${dest}`,
+    note: "Ranked by share of foreign nights. Leading indicator and consumer confidence: OECD, long-term average = 100, Δ in points. Retail volume, house prices, unemployment, trips and spending abroad: Eurostat (European markets only). € vs currency: a stronger euro (red) makes the destination dearer for that market. Click a row for its trends.",
+    table: () => ({ columns: cols.map((c) => c.label), rows: rows.map((r) => cols.map((c) => r[c.key])) }) });
+  c0.chartEl.replaceWith(dataTable(cols, rows, { initialSort: { key: "share", dir: "desc" }, highlight: (r) => r.code === market,
+    onRowClick: (r) => ctx.setState({ market: r.code }) }));
+
+  const m = monthly.filter((r) => r.market_code === market);
+  const p = palette();
+  const c1 = card({ title: `${marketName(market)}: leading indicator and consumer confidence`, span: 6,
+    note: "OECD, amplitude adjusted, long-term average = 100. Below 100 and falling signals weaker demand ahead.",
+    legend: [{ label: "Leading indicator", color: p.series[0] }, { label: "Consumer confidence", color: p.series[1] }],
+    table: () => ({ columns: ["Month", "Leading indicator", "Consumer confidence"], rows: m.map((r) => [r.month, r.oecd_cli, r.oecd_consumer_confidence]) }) });
+  const c2 = card({ title: `${marketName(market)}: retail sales volume`, span: 6, note: "Change on a year earlier, seasonally and calendar adjusted (Eurostat).",
+    table: () => ({ columns: ["Month", "Retail volume YoY"], rows: m.map((r) => [r.month, r.retail_volume_yoy]) }) });
+  const hp = hpi.filter((r) => r.market_code === market);
+  const c3 = card({ title: `${marketName(market)}: house prices`, span: 6, note: "Annual rate of change, all dwellings (Eurostat). A wealth signal for discretionary travel.",
+    table: () => ({ columns: ["Quarter", "House prices YoY %"], rows: hp.map((r) => [r.quarter_start, r.house_prices_yoy_pct]) }) });
+  const tr = travel.filter((r) => r.market_code === market && isNum(r.trips_abroad));
+  const c4 = card({ title: `${marketName(market)}: trips abroad by residents`, span: 6, note: "Trips of one night or more, all purposes (Eurostat, annual).",
+    table: () => ({ columns: ["Year", "Trips abroad", "Trips at home", "Spend abroad €", "Spend per night abroad €"],
+      rows: tr.map((r) => [r.year, r.trips_abroad, r.trips_domestic, r.spend_abroad_eur, r.spend_per_night_abroad_eur]) }) });
+  ctx.view.append(grid(c0, c1, c2, c3, c4));
+  timeChart(c1.chartEl, { emptyMessage: `The OECD does not publish these indicators for ${marketName(market)}.`, yFormat: (v) => fmtDec(v, 1), series: [
+    { name: "Leading indicator", data: m.map((r) => [r.month, r.oecd_cli]) },
+    { name: "Consumer confidence", data: m.map((r) => [r.month, r.oecd_consumer_confidence]) }] });
+  timeChart(c2.chartEl, { emptyMessage: `Eurostat publishes this for European countries only; no series for ${marketName(market)}.`, markZero: true, yFormat: (v) => fmtChange(v, { digits: 0 }), series: [{ name: "Retail YoY", type: "bar", data: m.map((r) => [r.month, r.retail_volume_yoy]) }] });
+  timeChart(c3.chartEl, { emptyMessage: `Eurostat publishes this for European countries only; no series for ${marketName(market)}.`, markZero: true, yFormat: (v) => fmtRate(v, 0), series: [{ name: "House prices", type: "bar", data: hp.map((r) => [r.quarter_start, r.house_prices_yoy_pct]) }] });
+  timeChart(c4.chartEl, { emptyMessage: `Eurostat publishes this for European countries only; no series for ${marketName(market)}.`, yFormat: (v) => fmtNum(v, 0), series: [{ name: "Trips abroad", type: "bar", data: tr.map((r) => [String(r.year), r.trips_abroad]) }] });
+}
+
+// --------------------------------------------------------------------- weather
+export async function weather(ctx) {
+  const rows = await loadTable("weather_monthly");
+  const locs = ctx.meta.weather_locations;
+  const withData = new Set(rows.map((r) => r.location_code));
+  const avail = locs.filter((l) => withData.has(l.location_code));
+  if (!avail.length) {
+    ctx.view.append(h("div", { class: "empty" }, "Weather history is still being backfilled from Open-Meteo; it appears after the next daily refresh."));
+    return;
+  }
+  const loc = avail.some((l) => l.location_code === ctx.state.loc) ? ctx.state.loc : (avail.find((l) => l.location_code === "PMI") || avail[0]).location_code;
+  const lname = (c) => { const l = locs.find((x) => x.location_code === c); return l ? `${l.location_name}` : c; };
+  ctx.filters.append(select("Destination", avail.map((l) => ({ value: l.location_code, label: `${l.location_name} (${ctx.geoName(l.country_code)})` })), loc,
+    (v) => ctx.setState({ loc: v })));
+  const series = rows.filter((r) => r.location_code === loc);
+  const last = series.at(-1);
+  const year = Number(last.month.slice(0, 4));
+  const normalYears = Math.max(...series.map((r) => r.normal_years || 0));
+  const p = palette();
+  const tiles = h("div", { class: "tiles" },
+    tile(`Average high, ${fmtMonth(last.month)}`, isNum(last.avg_max_temp_c) ? `${last.avg_max_temp_c.toFixed(1)}°C` : "n/a",
+      isNum(last.temp_anomaly_c) ? `${signed(last.temp_anomaly_c, 1, "°C")} vs normal` : "normal not yet available"),
+    tile("Sunshine", isNum(last.sunshine_hours) ? `${Math.round(last.sunshine_hours)} h` : "n/a",
+      isNum(last.sunshine_anomaly_hours) ? `${signed(last.sunshine_anomaly_hours, 0, " h")} vs normal` : "&nbsp;"),
+    tile("Rainfall", isNum(last.precipitation_mm) ? `${Math.round(last.precipitation_mm)} mm` : "n/a",
+      isNum(last.precipitation_vs_normal) ? `${Math.round(last.precipitation_vs_normal * 100)}% of normal · ${last.rainy_days} rainy days` : "&nbsp;"),
+  );
+  const yearData = (y, key) => series.filter((r) => r.month.startsWith(String(y))).map((r) => [r.month.slice(5), r[key]]);
+  const normalData = (key) => MONTH_KEYS.map((m) => [m, series.find((r) => r.month.slice(5) === m && isNum(r[key]))?.[key] ?? null]);
+  const legend = [{ label: String(year), color: p.series[0] }, { label: String(year - 1), color: p.series[1] }, { label: `Normal (${normalYears} yrs)`, color: p.context }];
+  const mk = (title, key, normKey, note) => card({ title: `${title}: ${lname(loc)}`, span: 4, note, legend,
+    table: () => ({ columns: ["Month", String(year), String(year - 1), "Normal"],
+      rows: MONTH_KEYS.map((m) => [monthName(+m), yearData(year, key).find((d) => d[0] === m)?.[1] ?? null,
+        yearData(year - 1, key).find((d) => d[0] === m)?.[1] ?? null, normalData(normKey).find((d) => d[0] === m)?.[1] ?? null]) }) });
+  const c1 = mk("Average daily high", "avg_max_temp_c", "normal_max_temp_c", "Monthly mean of daily maximum temperature, °C (ERA5 reanalysis via Open-Meteo).");
+  const c2 = mk("Sunshine hours", "sunshine_hours", "normal_sunshine_hours", "Total hours of sunshine per month.");
+  const c3 = mk("Rainfall", "precipitation_mm", "normal_precipitation_mm", "Total precipitation per month, mm.");
+  const latestMonth = rows.reduce((m, r) => (r.month > m ? r.month : m), "");
+  const prevMonth = (() => { const d = new Date(`${latestMonth}-01`); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); })();
+  const tableMonth = rows.filter((r) => r.month === latestMonth).length >= avail.length / 2 ? latestMonth : prevMonth;
+  const all = rows.filter((r) => r.month === tableMonth).map((r) => ({ ...r, name: lname(r.location_code),
+    country: ctx.geoName(locs.find((l) => l.location_code === r.location_code)?.country_code) }));
+  const cols = [
+    { key: "name", label: "Destination", text: true }, { key: "country", label: "Country", text: true },
+    { key: "avg_max_temp_c", label: "Avg high °C", fmt: (v) => fmtDec(v, 1) },
+    { key: "temp_anomaly_c", label: "vs normal", fmt: (v) => signed(v, 1, "°C") },
+    { key: "sunshine_hours", label: "Sunshine h", fmt: (v) => fmtDec(v, 0) },
+    { key: "sunshine_anomaly_hours", label: "vs normal", fmt: (v) => signed(v, 0, " h") },
+    { key: "precipitation_mm", label: "Rain mm", fmt: (v) => fmtDec(v, 0) },
+    { key: "precipitation_vs_normal", label: "% of normal", fmt: (v) => fmtPct(v, 0) },
+    { key: "rainy_days", label: "Rainy days", fmt: (v) => v ?? "n/a" },
+  ];
+  const c4 = card({ title: `All destinations, ${fmtMonth(tableMonth)}`, span: 12, csvName: `weather-${tableMonth}`,
+    note: "Normal = average of the same month over every complete year downloaded since 2016 (history backfills over the first daily runs).",
+    table: () => ({ columns: cols.map((c) => c.label), rows: all.map((r) => cols.map((c) => r[c.key])) }) });
+  c4.chartEl.replaceWith(dataTable(cols, all, { initialSort: { key: "avg_max_temp_c", dir: "desc" }, highlight: (r) => r.location_code === loc,
+    onRowClick: (r) => ctx.setState({ loc: r.location_code }) }));
+  ctx.view.append(tiles, h("div", { style: "height:16px" }), grid(c1, c2, c3, c4));
+  for (const [c, key, normKey, fmt] of [[c1, "avg_max_temp_c", "normal_max_temp_c", (v) => `${v.toFixed(0)}°`],
+    [c2, "sunshine_hours", "normal_sunshine_hours", (v) => `${v.toFixed(0)} h`], [c3, "precipitation_mm", "normal_precipitation_mm", (v) => `${v.toFixed(0)} mm`]]) {
+    timeChart(c.chartEl, { categories: MONTH_KEYS, xFormat: (v) => monthName(+v), yFormat: fmt, series: [
+      { name: String(year), data: yearData(year, key), color: p.series[0], width: 2.5 },
+      { name: String(year - 1), data: yearData(year - 1, key), color: p.series[1] },
+      { name: "Normal", data: normalData(normKey), color: p.context }] });
+  }
+}
+
 // ------------------------------------------------------------------------ data
 export async function data(ctx) {
   const srcs = ctx.meta.sources;
@@ -684,6 +927,10 @@ export async function data(ctx) {
       <li><b>Year to date</b>: months of the latest year up to each market's latest published month, against the same months a year earlier and in ${ctx.meta.baseline_year}.</li>
       <li><b>Source markets</b>: the guest's country of residence; shares exclude domestic guests.</li>
       <li><b>Spain hotel prices</b>: INE IRSH ADR and RevPAR by tourist zone; occupancy = RevPAR ÷ ADR.</li>
+      <li><b>Portugal revenue per night</b>: Statistics Portugal lodging income ÷ nights by NUTS 2 region and type. A per-guest price proxy, not ADR.</li>
+      <li><b>Airports and routes</b>: every airport Eurostat reports (avia_paoa); routes are passengers per airport pair (avia_par_&lt;country&gt;), both directions, which Eurostat publishes with a long lag.</li>
+      <li><b>Market demand</b>: OECD composite leading indicator and consumer confidence (long-term average = 100) for European and major non-European markets; Eurostat retail volume, house prices, unemployment and residents' trips and spending abroad for European markets.</li>
+      <li><b>Weather</b>: Open-Meteo ERA5 reanalysis, daily values aggregated to months; normal = same-month average over complete years since 2016.</li>
     </ul>
     <h3>Live data</h3>
     <p>The warehouse is rebuilt every day from the APIs. On top of that snapshot, the Rates &amp; FX tab and the EU overview call

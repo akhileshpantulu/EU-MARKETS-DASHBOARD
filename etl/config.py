@@ -53,6 +53,10 @@ class EurostatDataset:
     # time and keep the ones that answer (used for long airport lists).
     split_on: str | None = None
     core: bool = False              # the refresh fails if a core source fails
+    # Same query against several datasets (one per country, e.g. avia_par_es,
+    # avia_par_it); "{code}" in the candidate code is replaced by each entry and
+    # every answer goes into one raw file.
+    fan_out: tuple[str, ...] = ()
 
 
 NACE_ACCOM = multi("nace_r2", "I551-I553", "I551", "I552", "I553")
@@ -68,6 +72,13 @@ def since_month() -> Params:
 def since_year(year: int = SINCE_YEAR) -> Params:
     return [("sinceTimePeriod", str(year))]
 
+
+# Route data (airport pairs) is large, so it starts later than other series.
+ROUTES_SINCE = 2023
+ROUTE_COUNTRIES = (
+    "at", "be", "bg", "cy", "cz", "de", "dk", "ee", "el", "es", "fi", "fr", "hr", "hu", "ie", "it", "lt", "lu",
+    "lv", "mt", "nl", "pl", "pt", "ro", "se", "si", "sk", "is", "no", "ch",
+)
 
 # Major gateway and leisure airports (Eurostat rep_airp = country_ICAO).
 # Names and coordinates live in seeds/airport.csv.
@@ -151,11 +162,23 @@ EUROSTAT_DATASETS: list[EurostatDataset] = [
         dims=("unit", "tra_meas", "schedule", "tra_cov", "geo", "time"),
     ),
     EurostatDataset(
-        "avia_paoa", "Air passengers carried, monthly, by main airport",
-        (Candidate("avia_paoa", M + [("unit", "PAS"), ("tra_meas", "PAS_CRD"), ("schedule", "TOTAL"),
-                                     ("tra_cov", "TOTAL")] + multi("rep_airp", *AIRPORTS) + since_month()),),
+        "avia_paoa", "Air passengers carried, monthly, by airport (every reporting airport)",
+        (
+            Candidate("avia_paoa", M + [("unit", "PAS"), ("tra_meas", "PAS_CRD"), ("schedule", "TOTAL"),
+                                        ("tra_cov", "TOTAL")] + since_month()),
+            Candidate("avia_paoa", M + [("unit", "PAS"), ("tra_meas", "PAS_CRD"), ("schedule", "TOTAL"),
+                                        ("tra_cov", "TOTAL")] + multi("rep_airp", *AIRPORTS) + since_month()),
+        ),
         dims=("unit", "tra_meas", "schedule", "tra_cov", "rep_airp", "time"),
         split_on="rep_airp",
+    ),
+    EurostatDataset(
+        # One dataset per reporting country; airp_pr = <CC>_<ICAO>_<CC>_<ICAO>.
+        "avia_par", "Air passengers carried by airport pair (routes), monthly",
+        (Candidate("avia_par_{code}", M + [("unit", "PAS"), ("tra_meas", "PAS_CRD")]
+                   + [("sinceTimePeriod", f"{ROUTES_SINCE}-01")]),),
+        dims=("unit", "tra_meas", "airp_pr", "time"),
+        fan_out=ROUTE_COUNTRIES,
     ),
     # ------------------------------------------------------- prices and macro
     EurostatDataset(
@@ -211,6 +234,35 @@ EUROSTAT_DATASETS: list[EurostatDataset] = [
                    + since_month()),),
         dims=("statinfo", "unit", "currency", "time"),
     ),
+    # ------------------------------------------- source-market demand health
+    EurostatDataset(
+        "sts_trtu_m", "Retail trade volume, seasonally and calendar adjusted (2021 = 100)",
+        (
+            Candidate("sts_trtu_m", M + [("indic_bt", "VOL_SLS"), ("nace_r2", "G47"), ("s_adj", "SCA"),
+                                         ("unit", "I21")] + since_month()),
+            Candidate("sts_trtu_m", M + [("indic_bt", "VOL_SLS"), ("nace_r2", "G47")] + since_month()),
+        ),
+        dims=("indic_bt", "nace_r2", "s_adj", "unit", "geo", "time"),
+    ),
+    EurostatDataset(
+        "prc_hpi_q", "House price index, annual rate of change, quarterly",
+        (Candidate("prc_hpi_q", [("freq", "Q"), ("purchase", "TOTAL"), ("unit", "RCH_A"),
+                                 ("sinceTimePeriod", f"{SINCE_YEAR}-Q1")]),),
+        dims=("purchase", "unit", "geo", "time"),
+    ),
+    EurostatDataset(
+        "tour_dem_tttot", "Trips by residents (1+ nights), domestic and abroad, annual",
+        (Candidate("tour_dem_tttot", A + [("purpose", "TOTAL"), ("duration", "N_GE1"), ("unit", "NR")]
+                   + multi("c_dest", "WORLD", "DOM", "FOR") + since_year()),),
+        dims=("c_dest", "purpose", "duration", "unit", "geo", "time"),
+    ),
+    EurostatDataset(
+        "tour_dem_extot", "Tourism expenditure of residents (1+ nights), domestic and abroad, annual",
+        (Candidate("tour_dem_extot", A + [("purpose", "TOTAL"), ("duration", "N_GE1"), ("expend", "TOTXDUR"),
+                                          ("unit", "EUR")] + multi("c_dest", "DOM", "FOR")
+                   + multi("statinfo", "TOTAL", "AVG_TRP", "AVG_NGT") + since_year()),),
+        dims=("purpose", "duration", "c_dest", "expend", "statinfo", "unit", "geo", "time"),
+    ),
     EurostatDataset(
         "demo_gind", "Population on 1 January, annual",
         (Candidate("demo_gind", A + [("indic_de", "JAN")] + since_year()),),
@@ -244,6 +296,17 @@ ECB_SERIES = [
               "Euro area AAA government bond 10-year spot rate", "2015-01-01"),
 ]
 
+# ------------------------------------------------------------------- OECD SDMX
+# Covers source markets Eurostat does not (UK, US, China, Japan ...). REF_AREA is
+# ISO3; seeds/oecd_area.csv maps it to Eurostat country codes.
+OECD_API = "https://sdmx.oecd.org/public/rest/data/{key}"
+OECD_SERIES = {
+    "oecd_cli": ("OECD.SDD.STES,DSD_STES@DF_CLI,4.1/.M.LI.IX._Z.AA.IX._Z.H",
+                 "OECD composite leading indicator (amplitude adjusted, long-term average = 100)"),
+    "oecd_cci": ("OECD.SDD.STES,DSD_STES@DF_CLI,4.1/.M.CCICP.IX._Z.AA.IX._Z.H",
+                 "OECD consumer confidence indicator (amplitude adjusted, long-term average = 100)"),
+}
+
 # ------------------------------------------------------------------- INE (Spain)
 # Hotel Sector Profitability Indicators (IRSH): ADR and RevPAR by tourist zone.
 # Eurostat publishes no hotel prices, so this is the price layer for Spain.
@@ -251,6 +314,31 @@ INE_TABLES = {
     "irsh_zone_adr": 46297,
     "irsh_zone_revpar": 46300,
 }
+
+# ------------------------------------------------------------- Open-Meteo weather
+# Daily ERA5 reanalysis for the destinations in seeds/weather_location.csv,
+# aggregated to months in dbt. The free API limits volume per minute, hour and
+# day, so history is backfilled a few location-years per run (newest first) and
+# kept in the raw cache; after that only the current year is refreshed.
+OPENMETEO_API = "https://archive-api.open-meteo.com/v1/archive"
+WEATHER_LOCATIONS = ROOT / "seeds" / "weather_location.csv"
+WEATHER_START_YEAR = 2016
+WEATHER_DAILY = "temperature_2m_mean,temperature_2m_max,precipitation_sum,sunshine_duration"
+WEATHER_BACKFILL_PER_RUN = 90     # past location-years fetched per run
+WEATHER_PAUSE_SECONDS = 2.5
+
+# ----------------------------------------------------------- Statistics Portugal
+# INE.pt publishes no RevPAR / ADR series in its database, but it does publish
+# monthly lodging income and nights by NUTS 2 region and accommodation type, so
+# revenue per guest night is derived in dbt. Periods must be requested one by one
+# (Dim1 = S3A<yyyy><mm>); past months are cached, the latest few re-fetched.
+INEPT_DATA_API = "https://www.ine.pt/ine/json_indicador/pindica.jsp"
+INEPT_META_API = "https://www.ine.pt/ine/json_indicador/pindicaMeta.jsp"
+INEPT_INDICATORS = {
+    "lodging_income": "0012091",   # Lodging incomes (EUR), NUTS 2024 x type, monthly, 2022+
+    "nights": "0012092",           # Nights (No.), NUTS 2024 x type, monthly, 2022+
+}
+INEPT_REFRESH_MONTHS = 4           # provisional months re-fetched every run
 
 # ------------------------------------------------------------------ GISCO maps
 GISCO_FILES = {

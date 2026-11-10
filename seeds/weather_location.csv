@@ -1,0 +1,38 @@
+location_code,location_name,country_code,nuts2_code,latitude,longitude
+PMI,Palma de Mallorca,ES,ES53,39.57,2.65
+IBZ,Ibiza,ES,ES53,38.91,1.43
+AGP,Málaga,ES,ES61,36.72,-4.42
+ALC,Alicante,ES,ES52,38.35,-0.48
+BCN,Barcelona,ES,ES51,41.39,2.17
+MAD,Madrid,ES,ES30,40.42,-3.70
+LPA,Las Palmas de Gran Canaria,ES,ES70,28.12,-15.44
+TFS,Tenerife (south),ES,ES70,28.05,-16.71
+LIS,Lisbon,PT,PT17,38.72,-9.14
+FAO,Faro,PT,PT15,37.02,-7.93
+FNC,Funchal,PT,PT30,32.65,-16.91
+OPO,Porto,PT,PT11,41.15,-8.61
+NCE,Nice,FR,FRL0,43.70,7.27
+PAR,Paris,FR,FR10,48.86,2.35
+ROM,Rome,IT,ITI4,41.90,12.50
+VCE,Venice,IT,ITH3,45.44,12.33
+FLR,Florence,IT,ITI1,43.77,11.25
+NAP,Naples,IT,ITF3,40.85,14.27
+CTA,Catania,IT,ITG1,37.50,15.09
+OLB,Olbia,IT,ITG2,40.92,9.50
+ATH,Athens,EL,EL30,37.98,23.73
+HER,Heraklion,EL,EL43,35.34,25.14
+RHO,Rhodes,EL,EL42,36.43,28.22
+CFU,Corfu,EL,EL62,39.62,19.92
+DBV,Dubrovnik,HR,HR03,42.65,18.09
+SPU,Split,HR,HR03,43.51,16.44
+LCA,Larnaca,CY,CY00,34.92,33.63
+MLA,Valletta,MT,MT00,35.90,14.51
+VIE,Vienna,AT,AT13,48.21,16.37
+INN,Innsbruck,AT,AT33,47.27,11.39
+PRG,Prague,CZ,CZ01,50.08,14.44
+BER,Berlin,DE,DE30,52.52,13.40
+MUC,Munich,DE,DE21,48.14,11.58
+AMS,Amsterdam,NL,NL32,52.37,4.90
+CPH,Copenhagen,DK,DK01,55.68,12.57
+DUB,Dublin,IE,IE06,53.35,-6.26
+REK,Reykjavík,IS,IS00,64.15,-21.94

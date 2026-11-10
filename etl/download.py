@@ -20,10 +20,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from urllib.parse import urlencode
@@ -81,7 +82,27 @@ def eurostat_request(candidate: Candidate) -> dict:
     return doc
 
 
+def fetch_fan_out(ds: EurostatDataset) -> tuple[list, dict]:
+    """One request per dataset in ds.fan_out (e.g. avia_par_es, avia_par_it ...)."""
+    cand = ds.candidates[0]
+    docs, failed = [], []
+    for item in ds.fan_out:
+        code = cand.code.format(code=item)
+        try:
+            docs.append(eurostat_request(Candidate(code, cand.params)))
+        except SourceError as exc:
+            failed.append(code)
+            print(f"    {code} skipped: {exc}")
+    if not docs:
+        raise SourceError(f"every dataset failed: {', '.join(failed)}")
+    updated = max((d.get("updated") or "" for d in docs), default="")
+    return docs, {"code": cand.code.format(code="*"), "url": config.EUROSTAT_API.format(code=cand.code),
+                  "updated": updated or None, "datasets": len(docs), "skipped": failed}
+
+
 def fetch_eurostat(ds: EurostatDataset) -> tuple[dict | list, dict]:
+    if ds.fan_out:
+        return fetch_fan_out(ds)
     errors = []
     for cand in ds.candidates:
         try:
@@ -120,6 +141,19 @@ def fetch_ecb(series: config.EcbSeries) -> tuple[str, dict]:
     return text, {"code": f"{series.flow}.{series.key}", "url": f"{url}?{urlencode(params)}", "updated": last}
 
 
+# ------------------------------------------------------------------------- OECD
+def fetch_oecd(key: str) -> tuple[str, dict]:
+    url = config.OECD_API.format(key=key)
+    params = {"startPeriod": f"{config.SINCE_YEAR}-01", "dimensionAtObservation": "AllDimensions",
+              "format": "csvfilewithlabels"}
+    text = get(url, params=params, accept="text/csv").text
+    frame = pd.read_csv(StringIO(text))
+    if frame.empty or "OBS_VALUE" not in frame:
+        raise SourceError("no observations")
+    return text, {"code": key.split("/")[0], "url": f"{url}?{urlencode(params)}",
+                  "updated": str(frame["TIME_PERIOD"].max())}
+
+
 # -------------------------------------------------------------------------- INE
 def fetch_ine(table_id: int) -> tuple[list, dict]:
     url = config.INE_API.format(table_id=table_id)
@@ -142,6 +176,111 @@ def fetch_gisco(files: list[str]) -> tuple[dict, dict]:
         except (SourceError, ValueError) as exc:
             errors.append(f"{file}: {exc}")
     raise SourceError("; ".join(errors))
+
+
+# -------------------------------------------------------- Statistics Portugal
+def run_inept(manifest: dict) -> None:
+    """One file per indicator and month in data/raw/inept/<name>/<S3Ayyyymm>.json."""
+    for name, code in config.INEPT_INDICATORS.items():
+        key = f"inept.{name}"
+        print(f"- {key}")
+        out_dir = config.RAW_DIR / "inept" / name
+        out_dir.mkdir(parents=True, exist_ok=True)
+        entry = {"description": f"Statistics Portugal indicator {code} ({name.replace('_', ' ')})",
+                 "file": str(out_dir.relative_to(config.ROOT)), "code": f"INE.pt {code}",
+                 "url": f"{config.INEPT_DATA_API}?op=2&varcd={code}&lang=EN"}
+        try:
+            meta = get(config.INEPT_META_API, params={"varcd": code, "lang": "EN"}).json()
+            meta = meta[0] if isinstance(meta, list) else meta
+            cats = meta["Dimensoes"]["Categoria_Dim"][0]
+            periods = sorted(k.split("_")[-1] for k in cats if k.startswith("Dim_Num1_"))
+            recent = set(periods[-config.INEPT_REFRESH_MONTHS:])
+            fetched = 0
+            for period in periods:
+                path = out_dir / f"{period}.json"
+                if path.exists() and period not in recent:
+                    continue
+                payload = get(config.INEPT_DATA_API, params={"op": "2", "varcd": code, "Dim1": period,
+                                                              "lang": "EN"}).json()
+                body = payload[0] if isinstance(payload, list) else payload
+                if "Dados" not in body:
+                    print(f"    {period}: no data ({str(body)[:120]})")
+                    continue
+                path.write_text(json.dumps({"period": period, "Dados": body["Dados"]}, ensure_ascii=False),
+                                encoding="utf-8")
+                fetched += 1
+                time.sleep(0.3)
+            entry.update(status="ok", fetched_at=now(), updated=meta.get("UltimoPeriodo"),
+                         periods=len(periods), fetched_this_run=fetched)
+            print(f"    ok  {len(periods)} periods, {fetched} fetched, latest {meta.get('UltimoPeriodo')}")
+        except Exception as exc:  # noqa: BLE001
+            previous = manifest.get(key, {})
+            entry.update({k: previous[k] for k in ("updated", "fetched_at") if k in previous})
+            entry.update(status="stale" if any(out_dir.glob("*.json")) else "failed", error=str(exc)[:300])
+            print(f"    FAILED ({entry['status']}): {exc}")
+        manifest[key] = entry
+
+
+# ------------------------------------------------------------------- weather
+def weather_tasks(today: date) -> list[tuple[str, float, float, int]]:
+    """(location, lat, lon, year) still to fetch: the current year always, then
+    missing or incomplete past years, newest first, up to the per-run budget."""
+    with open(config.WEATHER_LOCATIONS, newline="", encoding="utf-8") as f:
+        locations = [(r["location_code"], float(r["latitude"]), float(r["longitude"])) for r in csv.DictReader(f)]
+    current = [(code, lat, lon, today.year) for code, lat, lon in locations]
+    past = []
+    for year in range(today.year - 1, config.WEATHER_START_YEAR - 1, -1):
+        for code, lat, lon in locations:
+            path = config.RAW_DIR / "openmeteo" / f"{code}_{year}.json"
+            complete = False
+            if path.exists():
+                try:
+                    days = json.loads(path.read_text())["daily"]["time"]
+                    complete = bool(days) and days[-1] == f"{year}-12-31"
+                except (ValueError, KeyError):
+                    complete = False
+            if not complete:
+                past.append((code, lat, lon, year))
+    return current + past[: config.WEATHER_BACKFILL_PER_RUN]
+
+
+def run_weather(manifest: dict) -> None:
+    print("- openmeteo.weather")
+    today = date.today()
+    last_day = today - timedelta(days=6)   # the archive lags about five days
+    out_dir = config.RAW_DIR / "openmeteo"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tasks = weather_tasks(today)
+    done, error = 0, None
+    for code, lat, lon, year in tasks:
+        end = min(date(year, 12, 31), last_day)
+        if end < date(year, 1, 1):
+            continue
+        params = {"latitude": lat, "longitude": lon, "start_date": f"{year}-01-01", "end_date": end.isoformat(),
+                  "daily": config.WEATHER_DAILY, "timezone": "UTC"}
+        try:
+            payload = get(config.OPENMETEO_API, params=params, retries=2).json()
+            if "daily" not in payload:
+                raise SourceError(str(payload)[:200])
+        except (SourceError, ValueError) as exc:
+            error = str(exc)
+            print(f"    {code} {year} failed: {exc}; stopping weather for this run")
+            break
+        payload["location_code"] = code
+        (out_dir / f"{code}_{year}.json").write_text(json.dumps(payload, separators=(",", ":")))
+        done += 1
+        time.sleep(config.WEATHER_PAUSE_SECONDS)
+    files = sorted(out_dir.glob("*.json"))
+    remaining = len(weather_tasks(today)) - len({t[0] for t in tasks if t[3] == today.year})
+    status = "ok" if error is None else ("stale" if files else "failed")
+    manifest["openmeteo.weather"] = {
+        "description": "Open-Meteo ERA5 daily weather for main destinations",
+        "file": str(out_dir.relative_to(config.ROOT)), "code": "archive-api daily",
+        "url": config.OPENMETEO_API, "updated": last_day.isoformat(), "fetched_at": now(), "status": status,
+        "location_years": len(files), "fetched_this_run": done, "backfill_remaining": max(remaining, 0),
+        **({"error": error[:300]} if error else {}),
+    }
+    print(f"    {done} location-years fetched, {len(files)} on disk, backfill remaining {max(remaining, 0)}")
 
 
 # ---------------------------------------------------------------------- runner
@@ -198,11 +337,23 @@ def main(argv: list[str] | None = None) -> int:
             path = config.RAW_DIR / "ecb" / f"{series.name}.csv"
             run_source(manifest, f"ecb.{series.name}", path, lambda s=series: fetch_ecb(s), series.description)
 
+    for name, (key, description) in config.OECD_SERIES.items():
+        if selected(name):
+            path = config.RAW_DIR / "oecd" / f"{name}.csv"
+            run_source(manifest, f"oecd.{name}", path, lambda k=key: fetch_oecd(k), description)
+            time.sleep(3)   # the OECD API rate-limits bursts
+
     for name, table_id in config.INE_TABLES.items():
         if selected(name):
             path = config.RAW_DIR / "ine" / f"{name}.json"
             run_source(manifest, f"ine.{name}", path, lambda t=table_id: fetch_ine(t),
                        f"INE IRSH table {table_id}")
+
+    if selected("inept"):
+        run_inept(manifest)
+
+    if selected("weather"):
+        run_weather(manifest)
 
     if not args.skip_geo:
         for name, files in config.GISCO_FILES.items():

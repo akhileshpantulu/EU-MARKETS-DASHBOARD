@@ -34,3 +34,8 @@
 {% macro in_dim_geo(geo_col) -%}
     {{ geo_col }} in (select geo_code from {{ ref('dim_geo') }})
 {%- endmacro %}
+
+{#- 'PALMA DE MALLORCA' -> 'Palma De Mallorca' (Eurostat airport labels are upper case). -#}
+{% macro title_case(col) -%}
+    array_to_string(list_transform(string_split(lower({{ col }}), ' '), w -> upper(left(w, 1)) || substr(w, 2)), ' ')
+{%- endmacro %}

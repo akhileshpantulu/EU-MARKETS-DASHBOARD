@@ -1,0 +1,46 @@
+iso3,market_code,market_name
+AUT,AT,Austria
+BEL,BE,Belgium
+CZE,CZ,Czechia
+DEU,DE,Germany
+DNK,DK,Denmark
+ESP,ES,Spain
+EST,EE,Estonia
+FIN,FI,Finland
+FRA,FR,France
+GRC,EL,Greece
+HUN,HU,Hungary
+IRL,IE,Ireland
+ITA,IT,Italy
+LTU,LT,Lithuania
+LUX,LU,Luxembourg
+LVA,LV,Latvia
+NLD,NL,Netherlands
+POL,PL,Poland
+PRT,PT,Portugal
+SVK,SK,Slovakia
+SVN,SI,Slovenia
+SWE,SE,Sweden
+CHE,CH,Switzerland
+NOR,NO,Norway
+ISL,IS,Iceland
+GBR,UK,United Kingdom
+TUR,TR,Türkiye
+USA,US,United States
+CAN,CA,Canada
+MEX,MX,Mexico
+BRA,BR,Brazil
+CHL,CL,Chile
+COL,CO,Colombia
+CRI,CR,Costa Rica
+CHN,CN,China
+JPN,JP,Japan
+KOR,KR,South Korea
+IND,IN,India
+IDN,ID,Indonesia
+AUS,AU,Australia
+NZL,NZ,New Zealand
+ISR,IL,Israel
+ZAF,ZA,South Africa
+EA20,EA20,Euro area (20)
+EU,EU27_2020,European Union (27)
