@@ -81,7 +81,8 @@ jobs:
             echo "No data changes."
           else
             git commit -m "Refresh site data snapshot ($(date -u +%Y-%m-%d))"
-            git push
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
 
       - uses: actions/configure-pages@v5
