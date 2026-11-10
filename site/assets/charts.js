@@ -127,9 +127,12 @@ function axisStyle(p) {
  * series: [{name, data: [[x, y]], color?, type?, area?, stack?, width?}]
  */
 export function timeChart(el, { series, yFormat = (v) => v, yName, zoom = false, xType = "category", yMin, markZero = false,
-  categories, xFormat, emptyMessage }) {
+  categories, xFormat, emptyMessage, capOutliers = false }) {
   if (!series.some((s) => s.data.some((d) => isNum(d[1])))) return empty(el, emptyMessage);
   const p = palette();
+  // Optional cap for a single bar series of changes, as in columnChart.
+  const cap = capOutliers ? outlierCap(series.flatMap((s) => s.data.map((d) => d[1]))) : null;
+  const hasNeg = series.some((s) => s.data.some((d) => isNum(d[1]) && d[1] < 0));
   const chart = init(el);
   const ax = axisStyle(p);
   const xs = xType === "category" ? categories || [...new Set(series.flatMap((s) => s.data.map((d) => d[0])))].sort() : undefined;
@@ -144,13 +147,27 @@ export function timeChart(el, { series, yFormat = (v) => v, yName, zoom = false,
     },
     xAxis: { type: xType, data: xs, boundaryGap: series.some((s) => s.type === "bar"), ...ax, splitLine: { show: false } },
     yAxis: { type: "value", name: yName, nameTextStyle: { color: p.muted, fontSize: 11 }, min: yMin, scale: yMin == null && !series.some((s) => s.type === "bar" || s.area),
-             ...ax, axisLine: { show: false }, axisLabel: { ...ax.axisLabel, formatter: (v) => yFormat(v) } },
+             ...ax, axisLine: { show: false }, axisLabel: { ...ax.axisLabel, formatter: (v) => yFormat(v) },
+             ...(cap ? { min: hasNeg ? -cap : undefined, max: cap } : {}) },
     dataZoom: zoom ? [{ type: "inside" }, { type: "slider", height: 22, bottom: 8, borderColor: p.grid,
       fillerColor: "rgba(42,120,214,0.12)", dataBackground: { lineStyle: { color: p.axis }, areaStyle: { color: p.grid } },
       textStyle: { color: p.muted } }] : [],
     series: series.map((s, i) => {
       const color = s.color || p.series[i % 8];
-      const base = { name: s.name, type: s.type || "line", data: xs ? alignTo(xs, s.data) : s.data, stack: s.stack,
+      const raw = xs ? alignTo(xs, s.data) : s.data;
+      const val = (d) => (Array.isArray(d) ? d[1] : d);
+      const over = (d) => isNum(val(d)) && Math.abs(val(d)) > cap;
+      let run = 0;
+      const data = cap ? raw.map((d, j) => {
+        const v = val(d);
+        run = j > 0 && over(raw[j - 1]) ? run + 1 : 0;
+        if (!over(d)) return d;
+        const clipped = Math.sign(v) * cap;
+        return { value: Array.isArray(d) ? [d[0], clipped] : clipped, label: { show: true, position: v > 0 ? "insideTop" : "insideBottom",
+          color: p.text, fontSize: 10, fontWeight: 600, backgroundColor: p.surface, borderColor: p.grid, borderWidth: 1, borderRadius: 3,
+          padding: [1, 3], offset: [0, (run % 3) * (v > 0 ? 19 : -19)], formatter: () => yFormat(v) }, rawValue: v };
+      }) : raw;
+      const base = { name: s.name, type: s.type || "line", data, stack: s.stack,
         itemStyle: { color, borderRadius: s.type === "bar" ? (s.stack ? 0 : [3, 3, 0, 0]) : 0 },
         emphasis: { focus: "series" } };
       if ((s.type || "line") === "line") {
@@ -163,7 +180,22 @@ export function timeChart(el, { series, yFormat = (v) => v, yName, zoom = false,
       return base;
     }),
   });
+  if (cap) {
+    // Tooltips show the true value of capped bars.
+    chart.setOption({ tooltip: { valueFormatter: undefined, formatter: (xs) => [escapeHTML(String(xs[0]?.axisValueLabel ?? xs[0]?.name ?? "")),
+      ...xs.map((x) => { const v = x.data?.rawValue ?? (Array.isArray(x.value) ? x.value[1] : x.value); return `${x.marker}${escapeHTML(x.seriesName)} <b>${isNum(v) ? yFormat(v) : "n/a"}</b>`; })].join("<br>") } });
+  }
+  el.nextElementSibling?.classList.contains("cap-note") && el.nextElementSibling.remove();
+  if (cap) el.after(h("p", { class: "cap-note" }, `Axis capped at ±${yFormat(cap).replace(/^[+−-]/, "")}; bars beyond it are labelled with their value.`));
   return chart;
+}
+
+/** A round axis limit when a few values (2020-22) dwarf the rest, else null. */
+function outlierCap(values) {
+  const abs = values.filter(isNum).map(Math.abs).sort((a, b) => a - b);
+  const typical = abs[Math.floor(abs.length * 0.75)] || 0;
+  const nice = (x) => { const e = 10 ** Math.floor(Math.log10(x)); const f = x / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e; };
+  return abs.length >= 6 && typical > 0 && abs.at(-1) > 3 * typical ? nice(typical * 2.2) : null;
 }
 
 function alignTo(xs, data) {
@@ -332,10 +364,8 @@ export function columnChart(el, { items, format = (v) => v, colorFn, emptyMessag
   const ax = axisStyle(p);
   // Cap the axis when a few years (2020-22) dwarf the rest; capped bars stop at the edge
   // and carry their true value as a label, so ordinary years stay readable.
-  const abs = items.map((d) => Math.abs(d.value)).filter(isNum).sort((a, b) => a - b);
-  const typical = abs[Math.floor(abs.length * 0.75)] || 0;
-  const nice = (x) => { const e = 10 ** Math.floor(Math.log10(x)); const f = x / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e; };
-  const cap = !noCap && abs.length >= 6 && typical > 0 && abs.at(-1) > 3 * typical ? nice(typical * 2.2) : null;
+  const abs = items.map((d) => Math.abs(d.value)).filter(isNum);
+  const cap = noCap ? null : outlierCap(abs);
   const shown = (v) => (cap && isNum(v) ? Math.max(-cap, Math.min(cap, v)) : v);
   const capped = (v) => cap && isNum(v) && Math.abs(v) > cap;
   // Within a run of capped bars, every second one is offset.

@@ -277,7 +277,11 @@ export async function sources(ctx) {
   const c1 = card({ title: `Where ${ctx.geoName(g)}'s foreign guests come from, ${year}`, span: 6,
     note: "Share of nights by foreign guests at all tourist accommodation. Eurostat publishes this split once a year.",
     table: () => ({ columns: ["Market", "Nights", "Share of foreign nights", "YoY", `vs ${base}`], rows: mk.map((r) => [pname(r.partner_code), r.nights, r.share_of_foreign_nights, r.nights_yoy, r.nights_vs_baseline]) }) });
-  const c2 = card({ title: `Growth by market vs ${base}`, span: 6, note: `Top 15 markets by nights in ${year}. Change in nights against ${base}.` });
+  // 2019 and earlier compare with the year before; later years with the 2019 baseline.
+  const vsBase = year > base;
+  const growth = (r) => (vsBase ? r.nights_vs_baseline : r.nights_yoy);
+  const c2 = card({ title: vsBase ? `Growth by market vs ${base}` : `Growth by market, ${year} vs ${year - 1}`, span: 6,
+    note: `Top 15 markets by nights in ${year}. Change in nights against ${vsBase ? base : year - 1}.` });
   const dest = rows.filter((r) => r.partner_code === origin && r.year === year && r.geo_code !== origin).sort((a, b) => b.nights - a.nights).slice(0, 15);
   const c3 = card({ title: `Where guests from ${pname(origin)} stay, ${year}`, span: 6, note: "Nights in each destination country.",
     table: () => ({ columns: ["Destination", "Nights", "YoY"], rows: dest.map((r) => [ctx.geoName(r.geo_code), r.nights, r.nights_yoy]) }) });
@@ -287,7 +291,7 @@ export async function sources(ctx) {
   ctx.view.append(grid(c1, c2, c3, c4));
   rankBars(c1.chartEl, { items: top.map((r) => ({ label: pname(r.partner_code), value: r.share_of_foreign_nights ?? null, code: r.partner_code })),
     format: (v) => fmtPct(v, 1), colorFn: (d, p) => (d.code === origin ? p.series[1] : p.series[0]) });
-  rankBars(c2.chartEl, { items: top.filter((r) => isNum(r.nights_vs_baseline)).map((r) => ({ label: pname(r.partner_code), value: r.nights_vs_baseline })),
+  rankBars(c2.chartEl, { items: top.filter((r) => isNum(growth(r))).map((r) => ({ label: pname(r.partner_code), value: growth(r) })),
     format: (v) => fmtChange(v), colorFn: (d, p) => (d.value >= 0 ? p.div[4] : p.div[0]) });
   rankBars(c3.chartEl, { items: dest.map((r) => ({ label: ctx.geoName(r.geo_code), value: r.nights, code: r.geo_code })),
     format: (v) => fmtNum(v), colorFn: (d, p) => (d.code === g ? p.series[1] : p.series[0]) });
@@ -378,7 +382,7 @@ export async function air(ctx) {
     const recent = rows.filter((r) => r.month <= `${fy}-12`).slice(-36);
     c2 = card({ title: "Passengers: change on a year earlier", span: 5, note: `36 months to ${fmtMonth(recent.at(-1)?.month)}.`,
       table: () => ({ columns: ["Month", "YoY"], rows: recent.map((r) => [r.month, r.air_passengers_yoy]) }) });
-    c2.draw = () => timeChart(c2.chartEl, { markZero: true, yFormat: (v) => fmtChange(v, { digits: 0 }), series: [{ name: "YoY", type: "bar", data: recent.map((r) => [r.month, r.air_passengers_yoy]) }] });
+    c2.draw = () => timeChart(c2.chartEl, { markZero: true, capOutliers: true, yFormat: (v) => fmtChange(v, { digits: 0 }), series: [{ name: "YoY", type: "bar", data: recent.map((r) => [r.month, r.air_passengers_yoy]) }] });
   }
   const mapped = scoped.filter((a) => isNum(a.latitude) && isNum(a.passengers_12m));
   const c3 = card({ title: "Main airports, trailing twelve months", span: 7, height: "map",
@@ -453,7 +457,7 @@ async function airportView(ctx, a, airportsMonthly, annualView) {
     const recent = withYoy.filter((r) => r.month <= `${fy}-12`).slice(-36);
     c2 = card({ title: "Change on a year earlier", span: 5, note: `36 months to ${fmtMonth(recent.at(-1)?.month)}.`,
       table: () => ({ columns: ["Month", "YoY"], rows: recent.map((r) => [r.month, r.yoy]) }) });
-    c2.draw = () => timeChart(c2.chartEl, { markZero: true, yFormat: (v) => fmtChange(v, { digits: 0 }), series: [{ name: "YoY", type: "bar", data: recent.map((r) => [r.month, r.yoy]) }] });
+    c2.draw = () => timeChart(c2.chartEl, { markZero: true, capOutliers: true, yFormat: (v) => fmtChange(v, { digits: 0 }), series: [{ name: "YoY", type: "bar", data: recent.map((r) => [r.month, r.yoy]) }] });
   }
 
   const ry = routeYears.includes(Number(ctx.state.ryear)) ? Number(ctx.state.ryear) : routeYears[0];
@@ -1293,8 +1297,10 @@ export async function center(ctx) {
           table: () => ({ columns: ["Market", "Nights", "Share", "YoY"], rows: top.map((r) => [pname(r.partner_code), r.nights, r.share_of_foreign_nights, r.nights_yoy]) }) });
         c1.draw = () => rankBars(c1.chartEl, { items: top.map((r) => ({ label: pname(r.partner_code), value: r.share_of_foreign_nights })), format: pctFmt(1) });
       }
-      const c2 = card({ title: `Growth vs ${base}, ${year}`, span: 5, note: "Top 12 markets by nights." });
-      const draw2 = () => rankBars(c2.chartEl, { items: top.filter((r) => isNum(r.nights_vs_baseline)).map((r) => ({ label: pname(r.partner_code), value: r.nights_vs_baseline })),
+      const vsBase = year > base;
+      const growth = (r) => (vsBase ? r.nights_vs_baseline : r.nights_yoy);
+      const c2 = card({ title: vsBase ? `Growth vs ${base}, ${year}` : `Growth on ${year - 1}, ${year}`, span: 5, note: "Top 12 markets by nights." });
+      const draw2 = () => rankBars(c2.chartEl, { items: top.filter((r) => isNum(growth(r))).map((r) => ({ label: pname(r.partner_code), value: growth(r) })),
         format: (v) => fmtChange(v), colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) });
       put("origins", "Source markets", "Guests' country of residence (Eurostat, annual).", [{ card: c1, draw: c1.draw }, { card: c2, draw: draw2 }]);
     },
