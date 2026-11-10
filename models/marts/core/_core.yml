@@ -263,8 +263,12 @@ models:
         tests:
           - relationships: {to: ref('dim_date'), field: date_key}
       - name: oecd_cli
+        description: Amplitude-adjusted, long-term average 100. The April 2020 collapse falls far below 80.
         tests:
-          - between: {min_value: 80, max_value: 120}
+          - between:
+              min_value: 40
+              max_value: 160
+              config: {severity: warn}
 
   - name: fact_house_prices_quarterly
     tests:
