@@ -48,9 +48,10 @@ jobs:
       - name: Install
         run: pip install -r requirements.txt
 
-      # Keep the last raw files: a source that fails today falls back to them.
+      # Keep the last raw files: a source that fails today falls back to them, and
+      # the weather history backfilled over earlier runs is not downloaded again.
       - name: Restore raw cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/raw
           key: raw-${{ github.run_id }}
@@ -58,6 +59,14 @@ jobs:
 
       - name: Download sources
         run: python -m etl.download
+
+      # Saved even if a later step fails, so downloads are never lost.
+      - name: Save raw cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/raw
+          key: raw-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Load raw tables
         run: python -m etl.load_raw
