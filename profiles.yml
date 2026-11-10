@@ -1,0 +1,8 @@
+# Used automatically when dbt runs from the repository root.
+eu_markets:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', 'data/eu_markets.duckdb') }}"
+      threads: 4

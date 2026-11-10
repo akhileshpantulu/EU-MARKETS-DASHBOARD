@@ -1,0 +1,38 @@
+geo_code,country_name,iso2,is_eu27,euro_adoption_year,currency_code,region_group
+AT,Austria,AT,true,1999,EUR,Western Europe
+BE,Belgium,BE,true,1999,EUR,Western Europe
+BG,Bulgaria,BG,true,2026,EUR,Central & Eastern Europe
+CY,Cyprus,CY,true,2008,EUR,Southern Europe
+CZ,Czechia,CZ,true,,CZK,Central & Eastern Europe
+DE,Germany,DE,true,1999,EUR,Western Europe
+DK,Denmark,DK,true,,DKK,Northern Europe
+EE,Estonia,EE,true,2011,EUR,Northern Europe
+EL,Greece,GR,true,2001,EUR,Southern Europe
+ES,Spain,ES,true,1999,EUR,Southern Europe
+FI,Finland,FI,true,1999,EUR,Northern Europe
+FR,France,FR,true,1999,EUR,Western Europe
+HR,Croatia,HR,true,2023,EUR,Southern Europe
+HU,Hungary,HU,true,,HUF,Central & Eastern Europe
+IE,Ireland,IE,true,1999,EUR,Western Europe
+IT,Italy,IT,true,1999,EUR,Southern Europe
+LT,Lithuania,LT,true,2015,EUR,Northern Europe
+LU,Luxembourg,LU,true,1999,EUR,Western Europe
+LV,Latvia,LV,true,2014,EUR,Northern Europe
+MT,Malta,MT,true,2008,EUR,Southern Europe
+NL,Netherlands,NL,true,1999,EUR,Western Europe
+PL,Poland,PL,true,,PLN,Central & Eastern Europe
+PT,Portugal,PT,true,1999,EUR,Southern Europe
+RO,Romania,RO,true,,RON,Central & Eastern Europe
+SE,Sweden,SE,true,,SEK,Northern Europe
+SI,Slovenia,SI,true,2007,EUR,Central & Eastern Europe
+SK,Slovakia,SK,true,2009,EUR,Central & Eastern Europe
+IS,Iceland,IS,false,,ISK,Northern Europe
+LI,Liechtenstein,LI,false,,CHF,Western Europe
+NO,Norway,NO,false,,NOK,Northern Europe
+CH,Switzerland,CH,false,,CHF,Western Europe
+UK,United Kingdom,GB,false,,GBP,Western Europe
+ME,Montenegro,ME,false,,EUR,Southern Europe
+MK,North Macedonia,MK,false,,MKD,Southern Europe
+AL,Albania,AL,false,,ALL,Southern Europe
+RS,Serbia,RS,false,,RSD,Central & Eastern Europe
+TR,Türkiye,TR,false,,TRY,Southern Europe

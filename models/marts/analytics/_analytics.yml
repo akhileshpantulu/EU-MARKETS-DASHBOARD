@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: mart_country_monthly
+    description: Every monthly country series side by side (drill-across). Grain geo x month.
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, date_key]}
+    columns:
+      - name: foreign_share
+        tests:
+          - between: {min_value: 0, max_value: 1.01}
+      - name: avg_length_of_stay
+        tests:
+          - between: {min_value: 1, max_value: 30}
+
+  - name: mart_country_annual
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, year]}
+    columns:
+      - name: high_season_share
+        tests:
+          - between: {min_value: 0, max_value: 1}
+      - name: peak_two_month_share
+        tests:
+          - between: {min_value: 0, max_value: 1}
+      - name: platform_share
+        tests:
+          - between: {min_value: 0, max_value: 1}
+
+  - name: mart_country_scorecard
+    columns:
+      - name: geo_code
+        tests: [unique, not_null]
+
+  - name: mart_region_annual
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, year]}
+    columns:
+      - name: peak_two_month_share
+        tests:
+          - between: {min_value: 0, max_value: 1}
+      - name: foreign_share
+        tests:
+          - between: {min_value: 0, max_value: 1.01}
+
+  - name: mart_region_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, date_key]}
+
+  - name: mart_source_markets
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, partner_code, year]}
+    columns:
+      - name: share_of_foreign_nights
+        tests:
+          - between: {min_value: 0, max_value: 1.01}
+
+  - name: mart_spain_zone_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [zone_key, date_key]}
+
+  - name: mart_data_freshness
+    columns:
+      - name: source_key
+        tests: [unique, not_null]

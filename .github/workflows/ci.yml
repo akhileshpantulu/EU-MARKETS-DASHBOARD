@@ -1,0 +1,33 @@
+# Offline checks on every pull request: unit tests and a full dbt build on
+# synthetic fixtures (no API calls), then a smoke test of the exported JSON.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: ["gh-pages"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: make test
+      - name: Check exported files
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          d = pathlib.Path("data/test_site")
+          meta = json.loads((d / "meta.json").read_text())
+          assert meta["synthetic"] is True
+          for name, file in meta["files"].items():
+              t = json.loads((d / file).read_text())
+              assert t["rows"], f"{name} is empty"
+              print(f"{name:<22} {len(t['rows']):>7,} rows")
+          PY

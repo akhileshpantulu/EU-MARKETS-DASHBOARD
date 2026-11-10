@@ -1,0 +1,61 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Source files flattened by `python -m etl.load_raw`, codes as published.
+    schema: raw
+    tables:
+      - name: eurostat_tour_occ_nim
+        description: Eurostat tour_occ_nim. Nights spent at tourist accommodation, monthly, by country.
+      - name: eurostat_tour_occ_arm
+        description: Eurostat tour_occ_arm. Arrivals at tourist accommodation, monthly, by country.
+      - name: eurostat_tour_occ_mnor
+        description: Eurostat tour_occ_mnor. Net occupancy rate of bed-places and bedrooms in hotels.
+      - name: eurostat_tour_cap_nat
+        description: Eurostat tour_cap_nat. Establishments, bedrooms and bed-places, annual.
+      - name: eurostat_tour_occ_ninraw
+        description: Eurostat tour_occ_ninraw. Nights by country of residence of the guest, annual.
+      - name: eurostat_tour_occ_nin2
+        description: Eurostat tour_occ_nin2. Nights by NUTS 2 region, annual.
+      - name: eurostat_tour_occ_nin2m
+        description: Eurostat tour_occ_nin2m. Nights by NUTS 2 region; time is the year, `month` the calendar month.
+      - name: eurostat_tour_ce_omn12
+        description: Eurostat tour_ce_omn12 (experimental). Short-stay rental nights booked via Airbnb, Booking and Expedia.
+      - name: eurostat_avia_paoc
+        description: Eurostat avia_paoc. Air passengers carried by reporting country, monthly.
+      - name: eurostat_avia_paoa
+        description: Eurostat avia_paoa. Air passengers carried by main airport, monthly.
+      - name: eurostat_hicp
+        description: Eurostat prc_hicp_minr (ECOICOP ver. 2, column coicop18) or prc_hicp_manr (ver. 1, column coicop).
+      - name: eurostat_sts_setu_m
+        description: Eurostat sts_setu_m. Services turnover index for NACE I55 and I56.
+      - name: eurostat_une_rt_m
+        description: Eurostat une_rt_m. Unemployment rate, seasonally adjusted.
+      - name: eurostat_ei_bsco_m
+        description: Eurostat ei_bsco_m. Consumer confidence indicator.
+      - name: eurostat_namq_10_gdp
+        description: Eurostat namq_10_gdp. Real GDP growth on the same quarter of the previous year.
+      - name: eurostat_irt_lt_mcby_m
+        description: Eurostat irt_lt_mcby_m. Long-term government bond yields.
+      - name: eurostat_ert_bil_eur_m
+        description: Eurostat ert_bil_eur_m. Monthly average euro exchange rates.
+      - name: eurostat_demo_gind
+        description: Eurostat demo_gind. Population on 1 January.
+      - name: eurostat_labels
+        description: Category labels of every Eurostat dimension downloaded (dataset, dimension, code, label).
+      - name: ecb_fx_daily
+        description: ECB EXR. Daily euro reference rates.
+      - name: ecb_deposit_rate
+        description: ECB FM. Deposit facility rate.
+      - name: ecb_estr
+        description: ECB EST. Euro short-term rate.
+      - name: ecb_euribor_3m
+        description: ECB FM. Euribor 3-month, monthly average.
+      - name: ecb_yield_10y
+        description: ECB YC. Euro area AAA 10-year spot rate.
+      - name: ine_irsh_zone_adr
+        description: INE IRSH table 46297. Average daily rate (ADR) by Spanish tourist zone.
+      - name: ine_irsh_zone_revpar
+        description: INE IRSH table 46300. Revenue per available room (RevPAR) by Spanish tourist zone.
+      - name: source_manifest
+        description: One row per downloaded source with status, timestamps and request URL.

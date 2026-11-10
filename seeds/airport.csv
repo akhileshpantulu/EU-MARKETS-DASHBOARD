@@ -1,0 +1,59 @@
+airport_code,iata_code,airport_name,city,country_code,latitude,longitude
+ES_LEMD,MAD,Adolfo Suárez Madrid-Barajas,Madrid,ES,40.47,-3.56
+ES_LEBL,BCN,Josep Tarradellas Barcelona-El Prat,Barcelona,ES,41.30,2.08
+ES_LEPA,PMI,Palma de Mallorca,Palma,ES,39.55,2.74
+ES_LEMG,AGP,Málaga-Costa del Sol,Málaga,ES,36.67,-4.50
+ES_LEAL,ALC,Alicante-Elche,Alicante,ES,38.28,-0.56
+ES_GCLP,LPA,Gran Canaria,Las Palmas,ES,27.93,-15.39
+ES_GCTS,TFS,Tenerife Sur,Tenerife,ES,28.04,-16.57
+ES_LEIB,IBZ,Ibiza,Ibiza,ES,38.87,1.37
+ES_GCRR,ACE,César Manrique-Lanzarote,Lanzarote,ES,28.95,-13.61
+ES_LEZL,SVQ,Seville,Seville,ES,37.42,-5.90
+ES_LEVC,VLC,Valencia,Valencia,ES,39.49,-0.48
+ES_GCFV,FUE,Fuerteventura,Fuerteventura,ES,28.45,-13.86
+ES_LEMH,MAH,Menorca,Mahón,ES,39.86,4.22
+FR_LFPG,CDG,Paris Charles de Gaulle,Paris,FR,49.01,2.55
+FR_LFPO,ORY,Paris Orly,Paris,FR,48.73,2.38
+FR_LFMN,NCE,Nice Côte d'Azur,Nice,FR,43.66,7.22
+FR_LFLL,LYS,Lyon-Saint Exupéry,Lyon,FR,45.73,5.08
+FR_LFML,MRS,Marseille Provence,Marseille,FR,43.44,5.22
+IT_LIRF,FCO,Rome Fiumicino,Rome,IT,41.80,12.25
+IT_LIMC,MXP,Milan Malpensa,Milan,IT,45.63,8.72
+IT_LIME,BGY,Milan Bergamo,Bergamo,IT,45.67,9.70
+IT_LIPZ,VCE,Venice Marco Polo,Venice,IT,45.51,12.35
+IT_LICC,CTA,Catania Fontanarossa,Catania,IT,37.47,15.07
+IT_LIRN,NAP,Naples,Naples,IT,40.89,14.29
+IT_LIEO,OLB,Olbia Costa Smeralda,Olbia,IT,40.90,9.52
+DE_EDDF,FRA,Frankfurt,Frankfurt,DE,50.03,8.57
+DE_EDDM,MUC,Munich,Munich,DE,48.35,11.79
+DE_EDDB,BER,Berlin Brandenburg,Berlin,DE,52.37,13.50
+DE_EDDL,DUS,Düsseldorf,Düsseldorf,DE,51.29,6.77
+DE_EDDH,HAM,Hamburg,Hamburg,DE,53.63,10.00
+NL_EHAM,AMS,Amsterdam Schiphol,Amsterdam,NL,52.31,4.76
+BE_EBBR,BRU,Brussels,Brussels,BE,50.90,4.48
+IE_EIDW,DUB,Dublin,Dublin,IE,53.42,-6.27
+AT_LOWW,VIE,Vienna,Vienna,AT,48.11,16.57
+DK_EKCH,CPH,Copenhagen,Copenhagen,DK,55.62,12.66
+SE_ESSA,ARN,Stockholm Arlanda,Stockholm,SE,59.65,17.92
+FI_EFHK,HEL,Helsinki-Vantaa,Helsinki,FI,60.32,24.96
+PT_LPPT,LIS,Lisbon Humberto Delgado,Lisbon,PT,38.77,-9.13
+PT_LPFR,FAO,Faro,Faro,PT,37.01,-7.97
+PT_LPPR,OPO,Porto,Porto,PT,41.24,-8.68
+PT_LPMA,FNC,Madeira,Funchal,PT,32.70,-16.77
+EL_LGAV,ATH,Athens,Athens,EL,37.94,23.94
+EL_LGIR,HER,Heraklion,Heraklion,EL,35.34,25.18
+EL_LGRP,RHO,Rhodes Diagoras,Rhodes,EL,36.41,28.09
+EL_LGKR,CFU,Corfu,Corfu,EL,39.60,19.91
+EL_LGTS,SKG,Thessaloniki Makedonia,Thessaloniki,EL,40.52,22.97
+CY_LCLK,LCA,Larnaca,Larnaca,CY,34.88,33.63
+MT_LMML,MLA,Malta,Valletta,MT,35.86,14.48
+HR_LDDU,DBV,Dubrovnik,Dubrovnik,HR,42.56,18.27
+HR_LDSP,SPU,Split,Split,HR,43.54,16.30
+PL_EPWA,WAW,Warsaw Chopin,Warsaw,PL,52.17,20.97
+PL_EPKK,KRK,Kraków,Kraków,PL,50.08,19.78
+CZ_LKPR,PRG,Prague Václav Havel,Prague,CZ,50.10,14.26
+HU_LHBP,BUD,Budapest Ferenc Liszt,Budapest,HU,47.44,19.26
+CH_LSZH,ZRH,Zurich,Zurich,CH,47.46,8.55
+CH_LSGG,GVA,Geneva,Geneva,CH,46.24,6.11
+NO_ENGM,OSL,Oslo Gardermoen,Oslo,NO,60.19,11.10
+IS_BIKF,KEF,Keflavík,Reykjavík,IS,63.99,-22.62

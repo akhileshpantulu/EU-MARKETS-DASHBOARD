@@ -1,0 +1,5 @@
+nace_code,accommodation_type,short_name,is_total,sort_order
+I551-I553,All tourist accommodation,All,true,1
+I551,Hotels and similar accommodation,Hotels,false,2
+I552,Holiday and other short-stay accommodation,Short-stay,false,3
+I553,"Camping grounds, recreational vehicle parks and trailer parks",Camping,false,4

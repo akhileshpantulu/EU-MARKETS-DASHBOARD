@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.venv/
+*.duckdb
+*.duckdb.wal
+target/
+logs/
+dbt_packages/
+.user.yml
+.DS_Store
+# Raw API responses are re-downloaded on every refresh (cached in CI).
+data/raw/
+tests/fixtures/raw/
+data/test_site/

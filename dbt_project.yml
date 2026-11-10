@@ -1,0 +1,37 @@
+name: eu_markets
+version: "1.0.0"
+config-version: 2
+profile: eu_markets
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages", "logs"]
+
+vars:
+  # dim_date starts here; every monthly source is requested from this month.
+  first_month: "2015-01-01"
+  # Pre-pandemic reference year for "vs 2019" comparisons.
+  baseline_year: 2019
+
+models:
+  eu_markets:
+    staging:
+      +schema: staging
+      +materialized: view
+    marts:
+      +materialized: table
+      core:
+        +schema: core
+      analytics:
+        +schema: analytics
+
+seeds:
+  eu_markets:
+    +schema: reference
+    country:
+      +column_types: {euro_adoption_year: integer, is_eu27: boolean}
+    airport:
+      +column_types: {latitude: double, longitude: double}

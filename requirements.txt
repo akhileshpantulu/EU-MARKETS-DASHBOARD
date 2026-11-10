@@ -1,0 +1,7 @@
+# Pipeline: download, load, transform, export. The site itself needs no Python.
+pandas>=2.2
+requests>=2.32
+duckdb>=1.1,<2
+dbt-core~=1.9.0
+dbt-duckdb~=1.9.0
+pytest>=8

@@ -1,0 +1,103 @@
+# Daily refresh: download every source, rebuild the warehouse, run the dbt tests,
+# export the marts and publish the static site to GitHub Pages.
+name: Refresh data and deploy
+
+on:
+  schedule:
+    - cron: "37 5 * * *"     # 05:37 UTC daily; Eurostat publishes overnight (CET)
+  workflow_dispatch:
+    inputs:
+      commit_data:
+        description: "Commit the exported site/data snapshot back to the branch"
+        type: boolean
+        default: false
+  push:
+    paths:
+      - "etl/**"
+      - "models/**"
+      - "seeds/**"
+      - "macros/**"
+      - "tests/**"
+      - "site/**"
+      - "!site/data/**"
+      - "dbt_project.yml"
+      - "requirements.txt"
+      - ".github/workflows/refresh.yml"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: refresh-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      # Keep the last raw files: a source that fails today falls back to them.
+      - name: Restore raw cache
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: raw-${{ github.run_id }}
+          restore-keys: raw-
+
+      - name: Download sources
+        run: python -m etl.download
+
+      - name: Load raw tables
+        run: python -m etl.load_raw
+
+      - name: dbt build (models + tests)
+        run: dbt build --profiles-dir .
+
+      - name: Report
+        run: python -m etl.report
+
+      - name: Export site data
+        run: python -m etl.export_site
+
+      - name: Commit data snapshot
+        if: github.event_name == 'workflow_dispatch' && inputs.commit_data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data
+          if git diff --cached --quiet; then
+            echo "No data changes."
+          else
+            git commit -m "Refresh site data snapshot ($(date -u +%Y-%m-%d))"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+        id: pages
+        continue-on-error: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

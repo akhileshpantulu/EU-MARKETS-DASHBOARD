@@ -1,0 +1,4 @@
+residence_code,residence_name,sort_order
+TOTAL,All guests,1
+DOM,Domestic guests,2
+FOR,Foreign guests,3

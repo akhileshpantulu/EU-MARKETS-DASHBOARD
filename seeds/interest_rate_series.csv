@@ -1,0 +1,5 @@
+series_code,series_name,frequency,sort_order
+deposit_rate,ECB deposit facility rate,daily,1
+estr,Euro short-term rate (EUR STR),daily,2
+euribor_3m,Euribor 3-month,monthly,3
+yield_10y,Euro area AAA 10-year government yield,daily,4

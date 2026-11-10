@@ -1,0 +1,226 @@
+version: 2
+
+models:
+  # ---------------------------------------------------------------- dimensions
+  - name: dim_date
+    description: Monthly calendar, conformed across every monthly fact. One row per month.
+    columns:
+      - name: date_key
+        description: Month as an integer yyyymm.
+        tests: [unique, not_null]
+      - name: season
+        description: High (June-September), Shoulder (April, May, October) or Low.
+        tests:
+          - accepted_values: {values: [High, Shoulder, Low]}
+      - name: days_in_month
+        tests:
+          - between: {min_value: 28, max_value: 31}
+
+  - name: dim_geo
+    description: >
+      Countries (seed), EU aggregates (seed) and NUTS 2 regions (Eurostat labels).
+      Regions roll up to their country through country_code.
+    columns:
+      - name: geo_code
+        tests: [unique, not_null]
+      - name: geo_name
+        tests: [not_null]
+      - name: geo_level
+        tests:
+          - accepted_values: {values: [country, aggregate, nuts2]}
+
+  - name: dim_residence
+    columns:
+      - name: residence_code
+        tests: [unique, not_null]
+
+  - name: dim_accommodation_type
+    columns:
+      - name: nace_code
+        tests: [unique, not_null]
+
+  - name: dim_partner
+    description: Guest country or world region of residence (tour_occ_ninraw).
+    columns:
+      - name: partner_code
+        tests: [unique, not_null]
+
+  - name: dim_airport
+    columns:
+      - name: airport_code
+        tests: [unique, not_null]
+      - name: country_code
+        tests:
+          - relationships: {to: ref('dim_geo'), field: geo_code}
+
+  - name: dim_currency
+    columns:
+      - name: currency_code
+        tests: [unique, not_null]
+
+  - name: dim_spain_zone
+    columns:
+      - name: zone_key
+        tests: [unique, not_null]
+
+  # --------------------------------------------------------------------- facts
+  - name: fact_accommodation_monthly
+    description: Nights and arrivals at tourist accommodation. Grain geo x month x residence x accommodation type.
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, date_key, residence_code, nace_code]}
+    columns:
+      - name: geo_code
+        tests:
+          - relationships: {to: ref('dim_geo'), field: geo_code}
+      - name: date_key
+        tests:
+          - not_null
+          - relationships: {to: ref('dim_date'), field: date_key}
+      - name: residence_code
+        tests:
+          - relationships: {to: ref('dim_residence'), field: residence_code}
+      - name: nace_code
+        tests:
+          - relationships: {to: ref('dim_accommodation_type'), field: nace_code}
+      - name: nights
+        tests: [non_negative]
+      - name: arrivals
+        tests: [non_negative]
+
+  - name: fact_hotel_occupancy_monthly
+    description: Net occupancy of hotel bed-places and bedrooms. Grain geo x month.
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, date_key]}
+    columns:
+      - name: date_key
+        tests:
+          - relationships: {to: ref('dim_date'), field: date_key}
+      - name: bed_place_occupancy_rate
+        tests:
+          - between: {min_value: 0, max_value: 1}
+      - name: room_occupancy_rate
+        tests:
+          - between: {min_value: 0, max_value: 1}
+
+  - name: fact_accommodation_capacity_annual
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, year, nace_code]}
+    columns:
+      - name: establishments
+        tests: [non_negative]
+      - name: bed_places
+        tests: [non_negative]
+
+  - name: fact_source_market_nights_annual
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, partner_code, year]}
+    columns:
+      - name: partner_code
+        tests:
+          - relationships: {to: ref('dim_partner'), field: partner_code}
+      - name: nights
+        tests: [non_negative]
+
+  - name: fact_regional_nights_annual
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, year, residence_code]}
+    columns:
+      - name: geo_code
+        tests:
+          - relationships: {to: ref('dim_geo'), field: geo_code}
+      - name: nights
+        tests: [non_negative]
+
+  - name: fact_regional_nights_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, date_key]}
+    columns:
+      - name: date_key
+        tests:
+          - relationships: {to: ref('dim_date'), field: date_key}
+      - name: nights
+        tests: [non_negative]
+
+  - name: fact_platform_nights_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, date_key]}
+    columns:
+      - name: date_key
+        tests:
+          - relationships: {to: ref('dim_date'), field: date_key}
+      - name: platform_nights
+        tests: [non_negative]
+
+  - name: fact_air_passengers_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, date_key]}
+    columns:
+      - name: date_key
+        tests:
+          - relationships: {to: ref('dim_date'), field: date_key}
+      - name: passengers
+        tests: [non_negative]
+
+  - name: fact_airport_passengers_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [airport_code, date_key]}
+    columns:
+      - name: airport_code
+        tests:
+          - relationships: {to: ref('dim_airport'), field: airport_code}
+      - name: passengers
+        tests: [non_negative]
+
+  - name: fact_consumer_prices_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, date_key, coicop_key]}
+    columns:
+      - name: coicop_key
+        tests:
+          - accepted_values: {values: [ALL, RESTAURANTS, ACCOMMODATION]}
+      - name: annual_rate_pct
+        tests:
+          - between: {min_value: -60, max_value: 200}
+
+  - name: fact_macro_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, date_key]}
+    columns:
+      - name: unemployment_rate_pct
+        tests:
+          - between: {min_value: 0, max_value: 50}
+
+  - name: fact_gdp_quarterly
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, quarter_start]}
+
+  - name: fact_population_annual
+    tests:
+      - unique_combination: {combination_of_columns: [geo_code, year]}
+    columns:
+      - name: population
+        tests: [non_negative]
+
+  - name: fact_fx_rates
+    tests:
+      - unique_combination: {combination_of_columns: [currency_code, rate_date, frequency]}
+    columns:
+      - name: units_per_eur
+        tests: [non_negative]
+
+  - name: fact_interest_rates
+    tests:
+      - unique_combination: {combination_of_columns: [series_code, rate_date]}
+
+  - name: fact_spain_zone_hotel_prices_monthly
+    tests:
+      - unique_combination: {combination_of_columns: [zone_key, date_key]}
+    columns:
+      - name: zone_key
+        tests:
+          - relationships: {to: ref('dim_spain_zone'), field: zone_key}
+      - name: adr_eur
+        tests: [non_negative]
+      - name: implied_room_occupancy_rate
+        tests:
+          - between: {min_value: 0, max_value: 1.05}
