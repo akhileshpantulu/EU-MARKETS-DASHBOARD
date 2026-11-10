@@ -16,10 +16,6 @@ JSON files.
 
 **Live site:** https://akhileshpantulu.github.io/EU-MARKETS-DASHBOARD/ (once GitHub Pages is enabled, see [Deploy](#deploy-to-github-pages))
 
-Modelled on [carlosalomar/balearic-tourism-dw](https://github.com/carlosalomar/balearic-tourism-dw)
-(Balearic Islands, Streamlit). This version widens the scope from three islands to every
-market Eurostat covers, adds 15 more sources and replaces Streamlit with a static site.
-
 ## What changed from the reference project
 
 | | balearic-tourism-dw | EU Markets Dashboard |
