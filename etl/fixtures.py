@@ -410,12 +410,13 @@ def main(out_dir: str) -> None:
                 for t, tdesc in types.items():
                     nights = 1e5 * (6 if geocod == "PT" else 1) * season(int(ym[5:]), 0.5) * (1 if t == "T" else 0.7)
                     price = 75 * season(int(ym[5:]), 0.3) * (1 + 0.05 * (int(ym[:4]) - 2022))
-                    val = nights if name == "nights" else nights * price
+                    val = nights if name == "nights" else nights * price / 1000   # thousands of euros
                     cells.append({"geocod": geocod, "geodsg": geodsg, "dim_3": t, "dim_3_t": tdesc,
                                   "ind_string": f"{val:.0f}", "valor": f"{val:.0f}"})
             path = root / "inept" / name / f"{period}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"period": period, "Dados": {ym: cells}}, ensure_ascii=False), encoding="utf-8")
+            payload = {"period": period, "power10": 3 if name == "lodging_income" else 0, "Dados": {ym: cells}}
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         manifest[f"inept.{name}"] = {"status": "ok", "code": name, "description": "SYNTHETIC fixture", "url": "synthetic"}
     for name, payload in weather_files().items():
         path = root / "openmeteo" / f"{name}.json"

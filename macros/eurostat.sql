@@ -36,6 +36,10 @@
 {%- endmacro %}
 
 {#- 'PALMA DE MALLORCA' -> 'Palma De Mallorca' (Eurostat airport labels are upper case). -#}
+{#- Capitalises after spaces, '/' and '-': 'ISTANBUL/ISTANBUL HAVALIMANI' -> 'Istanbul/Istanbul Havalimani'. -#}
 {% macro title_case(col) -%}
-    array_to_string(list_transform(string_split(lower({{ col }}), ' '), w -> upper(left(w, 1)) || substr(w, 2)), ' ')
+    array_to_string(list_transform(string_split(lower({{ col }}), ' '),
+        w -> array_to_string(list_transform(string_split(w, '/'),
+            x -> array_to_string(list_transform(string_split(x, '-'),
+                y -> upper(left(y, 1)) || substr(y, 2)), '-')), '/')), ' ')
 {%- endmacro %}

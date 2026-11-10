@@ -124,13 +124,14 @@ def inept_table(raw_dir: Path) -> pd.DataFrame:
     for name in config.INEPT_INDICATORS:
         for path in sorted((raw_dir / "inept" / name).glob("*.json")):
             payload = json.loads(path.read_text(encoding="utf-8"))
+            scale = 10 ** int(payload.get("power10") or 0)
             for _label, cells in (payload.get("Dados") or {}).items():
                 for cell in cells:
                     rows.append({"indicator": name, "period": payload.get("period") or path.stem,
-                                 **{c: cell.get(c) for c in INEPT_COLUMNS[2:]}})
+                                 **{c: cell.get(c) for c in INEPT_COLUMNS[2:]}, "scale": scale})
     df = pd.DataFrame(rows)
     if not df.empty:
-        df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
+        df["valor"] = pd.to_numeric(df["valor"], errors="coerce") * df.pop("scale")
     return ensure_columns(df, INEPT_COLUMNS, numeric={"valor"})[INEPT_COLUMNS]
 
 

@@ -195,18 +195,25 @@ def run_inept(manifest: dict) -> None:
             cats = meta["Dimensoes"]["Categoria_Dim"][0]
             periods = sorted(k.split("_")[-1] for k in cats if k.startswith("Dim_Num1_"))
             recent = set(periods[-config.INEPT_REFRESH_MONTHS:])
+            # Values are published in units of 10^Potencia10 (lodging income: thousands of euros).
+            power10 = int(meta.get("Potencia10") or 0)
             fetched = 0
             for period in periods:
                 path = out_dir / f"{period}.json"
                 if path.exists() and period not in recent:
-                    continue
+                    try:
+                        if "power10" in json.loads(path.read_text(encoding="utf-8")):
+                            continue
+                    except ValueError:
+                        pass
                 payload = get(config.INEPT_DATA_API, params={"op": "2", "varcd": code, "Dim1": period,
                                                               "lang": "EN"}).json()
                 body = payload[0] if isinstance(payload, list) else payload
                 if "Dados" not in body:
                     print(f"    {period}: no data ({str(body)[:120]})")
                     continue
-                path.write_text(json.dumps({"period": period, "Dados": body["Dados"]}, ensure_ascii=False),
+                path.write_text(json.dumps({"period": period, "power10": power10, "Dados": body["Dados"]},
+                                           ensure_ascii=False),
                                 encoding="utf-8")
                 fetched += 1
                 time.sleep(0.3)

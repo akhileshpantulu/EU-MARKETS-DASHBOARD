@@ -104,3 +104,11 @@ models:
   - name: mart_portugal_prices_monthly
     tests:
       - unique_combination: {combination_of_columns: [region_code, accommodation_type_code, date_key]}
+    columns:
+      - name: revenue_per_night_eur
+        description: Lodging income / nights. A units slip (INE.pt publishes income in thousands) shows up here.
+        tests:
+          - between:
+              min_value: 10
+              max_value: 1000
+              config: {severity: error, warn_if: '>0', error_if: '>20'}
