@@ -3,7 +3,7 @@ import { loadJSON, loadTable, fmtMonth } from "./util.js";
 import { disposeAll } from "./charts.js";
 import * as views from "./views.js";
 
-const TABS = ["home", "center", "markets", "seasonality", "regions", "sources", "rentals", "air", "macro", "demand",
+const TABS = ["home", "center", "report", "markets", "seasonality", "regions", "sources", "rentals", "air", "macro", "demand",
   "weather", "rates", "spain", "data"];
 // Old links (#overview, #country) open the control center.
 const ALIASES = { overview: "home", country: "center" };

@@ -5,8 +5,13 @@ import { h, downloadCSV, isNum, escapeHTML, fmtPrecise } from "./util.js";
 const instances = new Set();
 let resizeBound = false;
 
+// Charts read colours from the document, or from a scoped element (the report paper, which is
+// always light) while one is set; scoped charts render as SVG so they print sharply.
+let scopeEl = null;
+export function setChartScope(el) { scopeEl = el || null; }
+
 export function css(name) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return getComputedStyle(scopeEl?.isConnected ? scopeEl : document.documentElement).getPropertyValue(name).trim();
 }
 
 export function palette() {
@@ -28,7 +33,7 @@ export function disposeAll() {
 function init(el) {
   const prev = echarts.getInstanceByDom(el);
   if (prev) { instances.delete(prev); prev.dispose(); }
-  const chart = echarts.init(el, null, { renderer: "canvas" });
+  const chart = echarts.init(el, null, { renderer: scopeEl?.isConnected ? "svg" : "canvas" });
   instances.add(chart);
   if (!resizeBound) {
     resizeBound = true;
@@ -165,7 +170,7 @@ export function timeChart(el, { series, yFormat = (v) => v, yName, zoom = false,
         const clipped = Math.sign(v) * cap;
         return { value: Array.isArray(d) ? [d[0], clipped] : clipped, label: { show: true, position: v > 0 ? "insideTop" : "insideBottom",
           color: p.text, fontSize: 10, fontWeight: 600, backgroundColor: p.surface, borderColor: p.grid, borderWidth: 1, borderRadius: 3,
-          padding: [1, 3], offset: [0, (run % 3) * (v > 0 ? 19 : -19)], formatter: () => yFormat(v) }, rawValue: v };
+          padding: [1, 3], offset: [0, ((run + i) % 3) * (v > 0 ? 19 : -19)], formatter: () => yFormat(v) }, rawValue: v };
       }) : raw;
       const base = { name: s.name, type: s.type || "line", data, stack: s.stack,
         itemStyle: { color, borderRadius: s.type === "bar" ? (s.stack ? 0 : [3, 3, 0, 0]) : 0 },

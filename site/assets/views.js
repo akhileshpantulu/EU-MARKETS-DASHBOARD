@@ -6,6 +6,7 @@ import {
 } from "./util.js";
 import { card, timeChart, rankBars, heatmap, choropleth, bubbleMap, palette, empty, columnChart, legendHTML } from "./charts.js";
 import { liveFx, liveRates, liveEuNights, mergeRows } from "./live.js";
+export { report } from "./report.js";
 
 const MONTH_KEYS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
 

@@ -32,34 +32,36 @@ market Eurostat covers, adds 15 more sources and replaces Streamlit with a stati
 
 ## The dashboard
 
-The site is laid out as an operations console (dark by default, light on the toggle): a
-command bar with the build time, a UTC clock and one status light per data source, and a
-ticker along the bottom with ECB rates, FX (live from the ECB when reachable) and EU headline numbers.
+The site is dark by default (light on the toggle). The header states when the data was last
+refreshed and how many sources are healthy; the data is monthly, so there is no live clock.
 
-**01 Situation map (home page).** A full-height map of Europe with a Countries / Regions
-layer switch. The left rail picks the indicator (YTD growth, vs 2019, occupancy, air traffic,
-rentals, accommodation inflation, foreign share, intensity; for regions: growth, vs 2019,
-volume, seasonality, platform share) and ranks every country or region by it; hovering a row
-lights it up on the map. Hovering the map shows a brief; clicking a country, or a region,
-opens its dossier. The right rail is a signals feed derived from the data: biggest movers,
-occupancy swings, fastest air growth, highest accommodation inflation, platform rentals,
-source markets whose OECD leading indicator is falling, weather anomalies, the ECB rate
-and pipeline health.
+**01 Overview (home page).** A map of Europe with a Countries / Regions layer switch and a year
+selector for regions. Hovering shows a brief; clicking a country or region opens its dossier.
+The Highlights list beside it is derived from the latest releases: biggest movers, occupancy
+swings, air growth, accommodation inflation, platform rentals, leading indicators, weather.
 
-**02 Dossier.** Pick a country (or the EU total) and every section is laid out for it on one
-page, numbered, with a sticky jump-to bar: demand, occupancy and length of stay,
-seasonality, regions, source markets, short-stay rentals, air traffic, prices, macro,
-source-market demand health, weather, hotel prices, and FX and rates. A region picked on
-the map is highlighted in its regions section.
+**02 Country dossier.** Pick a country (or the EU total) and every section is laid out for it on
+one page: demand, occupancy and length of stay, seasonality, regions, source markets,
+short-stay rentals, air traffic, prices, macro, source-market demand health, weather, hotel
+prices, and FX and rates. A view switch (monthly pace, annual totals, annual change) and a
+year selector apply to every chart. Hovering an annual bar shows its value and the change on
+the previous year (same months for the year to date).
 
-One switch changes every chart on the page:
+**03 Reports.** A report builder over the same data:
 
-- **Pace vs prior years**: each calendar month of the latest year against the two years before
-  and 2019, so you see whether the year is running ahead or behind.
-- **Annual history (YoY)**: the change on the previous year for every year since 2005. The
-  latest year is year to date against the same months a year earlier, so it is comparable.
-  Flows (nights, passengers) show % change; rates (occupancy, inflation, unemployment) show the
-  change in the annual average.
+- **Level**: country, NUTS 2 region or airport.
+- **Standalone or comparison**: one place, or two to four of the same level side by side
+  (Italy v Spain, Balearics v Canaries v Crete, Palma v Chania).
+- **Sections** (check boxes, per level) and **analytics** (year-on-year change, compound annual
+  growth, indexed growth, change vs 2019, monthly detail for the final year, share of the wider
+  total, nights per resident, data tables, written commentary).
+- **Final year and number of years** (3, 5, 10, 15 or 20).
+
+The report renders as an A4 document (cover, contents, one section per page, rule-based
+commentary next to each chart) that you save as PDF from the browser's print dialog, and as
+an Excel workbook in HG format (one sheet per section; navy headers, grey subheaders,
+light-blue totals, Arial 14, 55% zoom, tables from D3). The settings live in the URL, so a
+report link can be shared and regenerated.
 
 **Explore tabs** compare markets side by side:
 
