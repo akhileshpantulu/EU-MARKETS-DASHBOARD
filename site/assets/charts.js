@@ -325,23 +325,41 @@ export function columnChart(el, { items, format = (v) => v, colorFn, emptyMessag
   const p = palette();
   const chart = init(el);
   const ax = axisStyle(p);
+  // Cap the axis when a few years (2020-22) dwarf the rest; capped bars stop at the edge
+  // and carry their true value as a label, so ordinary years stay readable.
+  const abs = items.map((d) => Math.abs(d.value)).filter(isNum).sort((a, b) => a - b);
+  const typical = abs[Math.floor(abs.length * 0.75)] || 0;
+  const nice = (x) => { const e = 10 ** Math.floor(Math.log10(x)); const f = x / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e; };
+  const cap = abs.length >= 6 && typical > 0 && abs.at(-1) > 3 * typical ? nice(typical * 2.2) : null;
+  const shown = (v) => (cap && isNum(v) ? Math.max(-cap, Math.min(cap, v)) : v);
+  const capped = (v) => cap && isNum(v) && Math.abs(v) > cap;
+  // Within a run of capped bars, every second one is offset.
+  const stagger = (i) => { let n = 0; for (let j = i; j > 0 && capped(items[j - 1].value); j--) n++; return n % 2 === 1; };
   chart.setOption({
     ...baseOption(p),
     grid: { left: 8, right: 16, top: 24, bottom: 8, containLabel: true },
     tooltip: { ...baseOption(p).tooltip, trigger: "axis", axisPointer: { type: "shadow", shadowStyle: { color: "rgba(127,127,127,0.08)" } },
-      formatter: (xs) => { const x = xs[0]; return `${escapeHTML(x.name)}<br><b>${isNum(x.value) ? format(x.value) : "n/a"}</b>`; } },
+      formatter: (xs) => { const d = items[xs[0].dataIndex]; return `${escapeHTML(d.label)}<br><b>${isNum(d.value) ? format(d.value) : "n/a"}</b>`; } },
     xAxis: { type: "category", data: items.map((d) => d.label), ...ax, splitLine: { show: false },
       axisLabel: { ...ax.axisLabel, interval: "auto", hideOverlap: true } },
-    yAxis: { type: "value", ...ax, axisLine: { show: false }, axisLabel: { ...ax.axisLabel, formatter: (v) => format(v) } },
+    yAxis: { type: "value", ...ax, axisLine: { show: false }, axisLabel: { ...ax.axisLabel, formatter: (v) => format(v) },
+      ...(cap ? { min: abs.length && items.some((d) => d.value < 0) ? -cap : undefined, max: cap } : {}) },
     series: [{
       type: "bar", barMaxWidth: 22,
-      data: items.map((d) => ({
-        value: isNum(d.value) ? d.value : null,
+      data: items.map((d, i) => ({
+        value: isNum(d.value) ? shown(d.value) : null,
         itemStyle: { color: colorFn ? colorFn(d, p) : p.series[0], opacity: d.muted ? 0.55 : 1,
           borderRadius: (d.value ?? 0) >= 0 ? [3, 3, 0, 0] : [0, 0, 3, 3] },
+        label: capped(d.value) ? { show: true, position: d.value >= 0 ? "insideTop" : "insideBottom", color: p.text, fontSize: 10.5,
+          fontWeight: 600, backgroundColor: p.surface, borderColor: p.grid, borderWidth: 1, borderRadius: 3, padding: [1, 3],
+          // Stagger badges of neighbouring capped bars so they do not overlap.
+          offset: [0, i > 0 && capped(items[i - 1].value) && stagger(i) ? (d.value >= 0 ? 20 : -20) : 0],
+          formatter: () => format(d.value) } : { show: false },
       })),
       markLine: { silent: true, symbol: "none", label: { show: false }, lineStyle: { color: p.axis, type: "solid" }, data: [{ yAxis: 0 }] },
     }],
   });
+  el.nextElementSibling?.classList.contains("cap-note") && el.nextElementSibling.remove();
+  if (cap) el.after(h("p", { class: "cap-note" }, `Axis capped at ±${format(cap).replace(/^[+−-]/, "")}; years beyond it are labelled with their value.`));
   return chart;
 }

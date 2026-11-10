@@ -815,7 +815,7 @@ const CHANGE_FMT = {
   index: (v) => fmtChange(v),
   rate01: (v) => signed(v * 100, 1, " pts"),
   pct: (v) => signed(v, 1, " pts"),
-  level: (v) => signed(v, 2),
+  level: (v) => signed(v, Math.abs(v) < 1 ? 2 : 1),
 };
 
 function section(id, title, note, ...children) {
@@ -861,7 +861,8 @@ function metricCard(ctx, { title, note, rows, hist, key, metric, fmt, span = 4, 
       table: () => ({ columns: ["Year", "Months", kind === "sum" ? "Total" : "Average", "Change"],
         rows: h_.map((r) => [r.is_ytd ? `${r.year} YTD` : r.year, r.months, r.value, r.change]) }) });
     return { card: c, draw: () => columnChart(c.chartEl, { items, emptyMessage,
-      format: kind === "rate01" ? (v) => signed(v * 100, 1, "") : kind === "sum" || kind === "index" ? (v) => fmtChange(v, { digits: 0 }) : (v) => signed(v, 1),
+      format: kind === "rate01" ? (v) => signed(v * 100, 1, "") : kind === "sum" || kind === "index" ? (v) => fmtChange(v, { digits: 0 })
+        : (v) => signed(v, Math.abs(v) < 1 ? 2 : 1),
       // polarity: "up" = rise is good (blue), "down" = fall is good, "neutral" = direction carries no judgement.
       colorFn: (d, pal) => (polarity === "neutral" ? pal.series[0]
         : (d.value >= 0) === (polarity === "up") ? pal.div[4] : pal.div[0]) }) };

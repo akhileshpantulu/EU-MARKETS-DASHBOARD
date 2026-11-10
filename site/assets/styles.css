@@ -236,3 +236,5 @@ table.data tr.highlight td { background: color-mix(in srgb, var(--accent) 10%, t
 .cc-section .grid:empty { display: none; }
 .cc-slot .loading { padding: 24px 0; }
 .cc-more { display: flex; justify-content: flex-end; }
+
+.cap-note { margin: 2px 0 0; font-size: 11.5px; color: var(--muted); }
