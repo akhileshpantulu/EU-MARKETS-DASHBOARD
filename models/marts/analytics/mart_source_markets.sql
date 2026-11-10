@@ -37,7 +37,8 @@ select
     m.partner_name,
     m.year,
     m.nights,
-    m.nights / nullif(coalesce(t.foreign_nights, t.country_markets_nights), 0) as share_of_foreign_nights,
+    m.nights / nullif(case when t.foreign_nights > 0 then t.foreign_nights else t.country_markets_nights end, 0)
+        as share_of_foreign_nights,
     m.nights / nullif(ly.nights, 0) - 1 as nights_yoy,
     m.nights / nullif(bl.nights, 0) - 1 as nights_vs_baseline,
     row_number() over (partition by m.geo_code, m.year order by m.nights desc) as market_rank
