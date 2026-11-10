@@ -57,11 +57,18 @@ the previous year (same months for the year to date).
   total, nights per resident, data tables, written commentary).
 - **Final year and number of years** (3, 5, 10, 15 or 20).
 
-The report renders as an A4 document (cover, contents, one section per page, rule-based
-commentary next to each chart) that you save as PDF from the browser's print dialog, and as
-an Excel workbook in HG format (one sheet per section; navy headers, grey subheaders,
-light-blue totals, Arial 14, 55% zoom, tables from D3). The settings live in the URL, so a
-report link can be shared and regenerated.
+The report renders as a 4:3 slide deck (10 x 7.5 in) in the house market-overview format:
+beige title band, Arial Nova titles, Century Gothic text, navy-headed tables, red / navy / grey
+series. Each section is one slide with an action headline (the conclusion), supporting bullets,
+a comparative table (places side by side, leaders in bold, negatives in brackets) and two or
+three charts. Standalone reports are benchmarked (a country against the EU-27, a region against
+its country, an airport against national air traffic). The executive summary ranks the places on
+a scorecard (scale, growth, recovery, momentum, occupancy, seasonality, international mix, air
+growth, pricing) and lists the conclusions. Year-by-year tables go in an appendix when "Data
+tables" is ticked. Save as PDF from the browser's print dialog. The Excel workbook is in HG
+format (one sheet per section; navy headers, grey subheaders, light-blue totals, Arial 14, 55%
+zoom, tables from D3). The logo files for the deck (`site/assets/brand/`) are kept out of the
+repository; without them the deck renders without the logo.
 
 **Explore tabs** compare markets side by side:
 

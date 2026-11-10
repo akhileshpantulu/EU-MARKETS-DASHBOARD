@@ -1,10 +1,8 @@
 // Report builder: choose a level (country, region or airport), one place or up to four to compare,
 // the sections and analytics to include, and a window of years. Renders a print-ready document
 // (Save as PDF from the browser) and an Excel workbook in HG format (ExcelJS, loaded on demand).
-import {
-  loadTable, isNum, h, select, segmented, fmtNum, fmtPrecise, fmtPct, fmtRate, fmtDec, fmtChange, monthName, groupBy,
-} from "./util.js";
-import { timeChart, columnChart, rankBars, setChartScope, palette, legendHTML } from "./charts.js";
+import { loadTable, isNum, h, select, segmented, fmtDec, monthName, groupBy } from "./util.js";
+import { setChartScope, palette, legendHTML, css, empty, initChart } from "./charts.js";
 
 const EXCELJS = "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js";
 const JSZIP = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js";
@@ -33,7 +31,7 @@ const ANALYTICS = [
   ["base", "Change vs 2019"], ["monthly", "Monthly detail for the final year"], ["share", "Share of the wider total"],
   ["intensity", "Nights per resident (countries)"], ["tables", "Data tables"], ["commentary", "Written commentary"],
 ];
-const DEFAULT_ANALYTICS = ["yoy", "cagr", "index", "base", "monthly", "share", "tables", "commentary"];
+const DEFAULT_ANALYTICS = ["yoy", "cagr", "index", "base", "monthly", "share", "commentary"];
 
 // ------------------------------------------------------------------ metrics
 // kind: sum (flows), rate01 (0-1 share), pct (percent), level, index, eur. Changes are ratios for
@@ -81,37 +79,7 @@ const AH_METRICS = new Set(["nights", "nights_foreign", "nights_domestic", "arri
   "consumer_confidence_balance", "bond_yield_10y_pct"]);
 
 const isRatio = (m) => m.kind === "sum" || m.kind === "index" || m.kind === "eur" || m.ratio;
-const signed = (v, d = 1) => {
-  if (!isNum(v)) return "n/a";
-  const r = Number(v.toFixed(d));
-  return `${r > 0 ? "+" : r < 0 ? "−" : ""}${Math.abs(r).toFixed(d)}`;
-};
 
-function fmtVal(m, v) {
-  if (!isNum(v)) return "n/a";
-  switch (m.kind) {
-    case "sum": return fmtPrecise(v);
-    case "rate01": return fmtPct(v, 1);
-    case "pct": return fmtRate(v, m.digits ?? 1);
-    case "index": return fmtDec(v, 1);
-    case "eur": return `€${v.toFixed(v < 100 ? 1 : 0)}`;
-    default: return fmtDec(v, m.digits ?? 1);
-  }
-}
-function fmtAxis(m) {
-  if (m.kind === "sum") return (v) => fmtNum(v, Math.abs(v) >= 1e6 ? 1 : 0);
-  if (m.kind === "rate01") return (v) => fmtPct(v, 0);
-  if (m.kind === "pct") return (v) => fmtRate(v, 0);
-  if (m.kind === "eur") return (v) => `€${Math.round(v)}`;
-  return (v) => fmtDec(v, m.digits && Math.abs(v) < 10 ? Math.min(m.digits, 1) : 0);
-}
-function fmtChg(m, c) {
-  if (!isNum(c)) return "n/a";
-  if (isRatio(m)) return fmtChange(c);
-  if (m.kind === "rate01") return `${signed(c * 100, 1)} pts`;
-  if (m.kind === "pct") return `${signed(c, 1)} pts`;
-  return signed(c, m.digits ?? 1);
-}
 const chgOf = (m, v, prev) => (!isNum(v) || !isNum(prev) ? null : isRatio(m) ? (prev ? v / prev - 1 : null) : v - prev);
 
 // ------------------------------------------------------------------ state
@@ -127,7 +95,7 @@ function readState(ctx) {
 
 const TABLES_BY_LEVEL = {
   country: ["annual_history", "country_annual", "airport_summary"],
-  region: ["region_annual", "annual_history"],
+  region: ["region_annual", "annual_history", "country_annual"],
   airport: ["airport_annual", "airport_summary", "annual_history"],
 };
 
@@ -148,7 +116,7 @@ export async function report(ctx) {
 
   if (st.go && st.ids.length) {
     // The paper exists (hidden) while the report is assembled so colours resolve to its light theme.
-    const paper = h("article", { class: "rp-paper", id: "rp-paper" });
+    const paper = h("article", { class: "rp-paper rp-deck", id: "rp-paper" });
     const scroll = h("div", { class: "rp-scroll", hidden: true }, paper);
     const loading = h("div", { class: "loading" }, "Building report…");
     docHost.append(loading, scroll);
@@ -285,7 +253,8 @@ async function buildReport(ctx, st) {
   const an = new Set(st.an);
   if (st.level === "country") {
     if (sec.has("seasonality") || an.has("monthly")) need.add("country_monthly");
-    if (sec.has("regions")) need.add("region_annual");
+    if (sec.has("regions") || sec.has("summary")) need.add("region_annual");
+    if (sec.has("summary")) { need.add("country_monthly"); need.add("source_markets"); }
     if (sec.has("sources")) need.add("source_markets");
     if (sec.has("air")) need.add("airport_annual");
     if (sec.has("macro")) need.add("gdp_quarterly");
@@ -293,23 +262,27 @@ async function buildReport(ctx, st) {
     if (sec.has("hotels")) { need.add("spain_zones_monthly"); need.add("portugal_prices_monthly"); }
     if (sec.has("fx")) need.add("fx_monthly");
   } else if (st.level === "region") {
-    if (sec.has("seasonality") || an.has("monthly")) need.add("region_monthly");
+    if (sec.has("seasonality") || an.has("monthly") || sec.has("summary")) { need.add("region_monthly"); need.add("country_monthly"); }
     if (sec.has("weather")) need.add("weather_monthly");
   } else {
-    if (sec.has("seasonality") || an.has("monthly")) need.add("airports_monthly");
+    if (sec.has("seasonality") || an.has("monthly") || sec.has("summary")) { need.add("airports_monthly"); need.add("country_monthly"); }
     if (sec.has("origins")) need.add("airport_origins");
     if (sec.has("routes")) need.add("airport_routes");
   }
   const D = await loadData([...need]);
-  const ents = st.ids.map((code, i) => ({ code, i, name: entityName(ctx, st.level, code, D), meta: st.level === "airport" ? D.airport_summary.find((a) => a.airport_code === code) : ctx.geoMeta(code) }));
+  const ents = st.ids.map((code, i) => ({ code, i, level: st.level, name: entityName(ctx, st.level, code, D), meta: st.level === "airport" ? D.airport_summary.find((a) => a.airport_code === code) : ctx.geoMeta(code) }));
   const years = Array.from({ length: st.span }, (_, i) => st.end - st.span + 1 + i);
   const R = { ctx, st, D, ents, years, an, cmp: st.mode === "cmp", base: ctx.meta.baseline_year, cache: new Map() };
+  // Standalone reports are measured against a benchmark: EU-27 for a country, its country for a
+  // region, national air traffic for an airport.
+  if (!R.cmp) R.bench = benchmarkFor(ctx, ents[0]);
   const sections = [];
   for (const [key, title] of SECTIONS[st.level]) {
-    if (!sec.has(key)) continue;
-    const s = await SECTION_BUILDERS[st.level][key](R);
+    if (!sec.has(key) || key === "summary") continue;
+    const s = SECTION_DEFS[st.level][key]?.(R);
     if (s) sections.push({ key, title, ...s });
   }
+  if (sec.has("summary")) sections.unshift({ key: "summary", title: "Executive summary", ...summarySlide(R, sections) });
   const names = ents.map((e) => e.name);
   const title = R.cmp ? names.join(" v ") : names[0];
   const kindLabel = { country: "tourism market", region: "regional tourism", airport: "airport traffic" }[st.level];
@@ -320,9 +293,19 @@ async function buildReport(ctx, st) {
   };
 }
 
+function benchmarkFor(ctx, e) {
+  if (e.level === "country") return e.code === "EU27_2020" ? null : { code: "EU27_2020", level: "country", name: "EU-27", bench: true, meta: ctx.geoMeta("EU27_2020") };
+  const cc = e.meta?.country_code;
+  if (!cc) return null;
+  return { code: cc, level: "country", name: e.level === "airport" ? `${ctx.geoName(cc)} (all airports)` : ctx.geoName(cc), bench: true, meta: ctx.geoMeta(cc), viaAir: e.level === "airport" };
+}
+// A benchmark country stands in for an airport's passengers with national air passengers.
+const BENCH_KEY = { passengers: "air_passengers" };
+
 // Series: [{year, value, change, ytd, months}] ascending, for one entity and metric.
 function series(R, key, e) {
-  const ck = `${key}|${e.code}`;
+  if (e.bench && e.viaAir) key = BENCH_KEY[key] || (key.startsWith("w_") ? key : `__none_${key}`);
+  const ck = `${key}|${e.level}|${e.code}`;
   if (R.cache.has(ck)) return R.cache.get(ck);
   const out = computeSeries(R, key, e).filter((r) => isNum(r.value)).sort((a, b) => a.year - b.year);
   R.cache.set(ck, out);
@@ -335,11 +318,12 @@ function withChanges(m, rows) {
 }
 
 function computeSeries(R, key, e) {
-  const { D, st } = R;
+  const { D } = R;
   const m = M[key];
+  if (!m) return [];
   const ah = (geo, metric) => D.annual_history.filter((r) => r.geo_code === geo && r.metric === metric)
     .map((r) => ({ year: r.year, value: r.value, change: r.change, ytd: !!r.is_ytd, months: r.months }));
-  if (st.level === "country") {
+  if (e.level === "country") {
     if (AH_METRICS.has(key)) return ah(e.code, key);
     if (["foreign_share", "peak_two_month_share", "platform_share", "nights_per_resident"].includes(key)) {
       return withChanges(m, D.country_annual.filter((r) => r.geo_code === e.code).map((r) => ({ year: r.year, value: r[key], ytd: !r.is_complete_year })));
@@ -372,12 +356,12 @@ function computeSeries(R, key, e) {
       return withChanges(m, [...g.entries()].map(([y, l]) => ({ year: y, value: l.reduce((a, r) => a + r.lodging_income_eur, 0) / l.reduce((a, r) => a + r.nights, 0), ytd: l.length < 12, months: l.length })));
     }
   }
-  if (st.level === "region") {
+  if (e.level === "region") {
     const rows = D.region_annual.filter((r) => r.geo_code === e.code);
     const chg = { nights: "nights_yoy", platform_nights: "platform_nights_yoy" }[key];
     return withChanges(m, rows.map((r) => ({ year: r.year, value: r[key], ytd: false, ...(chg ? { change: r[chg] } : {}) })));
   }
-  if (st.level === "airport") {
+  if (e.level === "airport") {
     const rows = D.airport_annual.filter((r) => r.airport_code === e.code);
     if (key === "passengers") return rows.map((r) => ({ year: r.year, value: r.passengers, change: r.passengers_yoy, ytd: !!r.is_ytd, months: r.months }));
     if (key === "share_country_air") {
@@ -390,7 +374,7 @@ function computeSeries(R, key, e) {
 }
 
 function weatherSeries(R, key, e) {
-  const locs = R.ctx.meta.weather_locations.filter((l) => (R.st.level === "region" ? l.nuts2_code === e.code : l.country_code === e.code)).map((l) => l.location_code);
+  const locs = R.ctx.meta.weather_locations.filter((l) => (e.level === "region" ? l.nuts2_code === e.code : l.country_code === e.code)).map((l) => l.location_code);
   if (!locs.length) return [];
   const field = { w_temp: "avg_max_temp_c", w_sun: "sunshine_hours", w_rain: "precipitation_mm", w_anom: "temp_anomaly_c" }[key];
   const summed = key === "w_sun" || key === "w_rain";
@@ -417,536 +401,819 @@ function vsBase(R, m, s, y) {
   const b = at(s, R.base), r = at(s, y);
   return b && r && !r.ytd && y !== R.base ? chgOf(m, r.value, b.value) : null;
 }
-const latestIn = (R, s) => inWindow(R, s).at(-1);
-const yLabel = (r) => (r.ytd ? `${r.year} YTD` : String(r.year));
-const ytdText = (r) => (r.ytd && r.months ? `${r.year} to ${monthName(r.months)}` : String(r.year));
 
-// ------------------------------------------------------------------ commentary
-function metricCommentary(R, key, opts = {}) {
-  if (!R.an.has("commentary")) return [];
-  const m = M[key];
-  const lines = [];
-  const data = R.ents.map((e) => ({ e, s: inWindow(R, series(R, key, e)) })).filter((d) => d.s.length);
-  if (!data.length) return [];
-  const lower = m.label.charAt(0).toLowerCase() + m.label.slice(1);
-  if (!R.cmp) {
-    const { e, s } = data[0];
-    const last = s.at(-1);
-    const prevTxt = last.ytd ? `the same months of ${last.year - 1}` : String(last.year - 1);
-    let t = m.kind === "sum"
-      ? `${e.name} recorded ${fmtVal(m, last.value)} ${lower.replace(/ \(.*\)$/, "")} in ${ytdText(last)}`
-      : `${m.label.replace(/ \(.*\)$/, "")} was ${fmtVal(m, last.value)} in ${ytdText(last)}`;
-    if (R.an.has("yoy") && isNum(last.change)) t += `, ${fmtChg(m, last.change)} on ${prevTxt}`;
-    lines.push(`${t}.`);
-    const g = R.an.has("cagr") ? cagr(m, s) : null;
-    if (g) lines.push(g.total ? `Between ${g.from} and ${g.to} it moved ${fmtChg(m, g.v)}.`
-      : `Between ${g.from} and ${g.to} it grew at a compound ${fmtChange(g.v)} a year.`);
-    const lastFull = s.filter((r) => !r.ytd).at(-1);
-    const vb = R.an.has("base") && lastFull ? vsBase(R, m, series(R, key, e), lastFull.year) : null;
-    if (isNum(vb)) lines.push(`${lastFull.year} was ${fmtChg(m, vb)} against ${R.base}.`);
-    const full = s.filter((r) => !r.ytd);
-    if (full.length >= 4 && !opts.noExtremes) {
-      const hi = full.reduce((a, r) => (r.value > a.value ? r : a)), lo = full.reduce((a, r) => (r.value < a.value ? r : a));
-      lines.push(`Highest in the period: ${hi.year} (${fmtVal(m, hi.value)}); lowest: ${lo.year} (${fmtVal(m, lo.value)}).`);
-    }
-    return lines;
-  }
-  // Comparison: rank on the latest common year, then on growth.
-  const common = [...new Set(data.flatMap((d) => d.s.map((r) => r.year)))].sort((a, b) => b - a)
-    .find((y) => data.every((d) => at(d.s, y))) ?? null;
-  if (common != null) {
-    const ranked = data.map((d) => ({ ...d, r: at(d.s, common) })).sort((a, b) => b.r.value - a.r.value);
-    const ytd = ranked.some((d) => d.r.ytd);
-    let t = `${m.label.replace(/ \(.*\)$/, "")} in ${common}${ytd ? " to date" : ""}: ${ranked.map((d) => `${d.e.name} ${fmtVal(m, d.r.value)}`).join(", ")}.`;
-    if (m.kind === "sum" && ranked.length >= 2 && ranked[1].r.value > 0) t += ` ${ranked[0].e.name} is ${(ranked[0].r.value / ranked[1].r.value).toFixed(2)} times ${ranked[1].e.name}.`;
-    lines.push(t);
-    if (R.an.has("yoy")) {
-      const ch = ranked.filter((d) => isNum(d.r.change)).sort((a, b) => b.r.change - a.r.change);
-      if (ch.length >= 2) lines.push(`Change on ${ytd ? "the same months a year earlier" : common - 1}: ${ch.map((d) => `${d.e.name} ${fmtChg(m, d.r.change)}`).join(", ")}.`);
-    }
-  }
-  if (R.an.has("cagr")) {
-    const gs = data.map((d) => ({ ...d, g: cagr(m, d.s) })).filter((d) => d.g).sort((a, b) => b.g.v - a.g.v);
-    if (gs.length >= 2) {
-      const from = Math.max(...gs.map((d) => d.g.from)), to = Math.min(...gs.map((d) => d.g.to));
-      lines.push(gs[0].g.total
-        ? `Change over the period: ${gs.map((d) => `${d.e.name} ${fmtChg(m, d.g.v)} (${d.g.from}-${d.g.to})`).join(", ")}.`
-        : `Compound annual growth${from === to ? "" : ` (${gs[0].g.from}-${gs[0].g.to})`}: ${gs.map((d) => `${d.e.name} ${fmtChange(d.g.v)}`).join(", ")}; ${gs[0].e.name} grew ${gs.length === 2 ? "faster" : "fastest"}.`);
-    }
-  }
-  if (R.an.has("base")) {
-    const vb = data.map((d) => { const lf = d.s.filter((r) => !r.ytd).at(-1); return { ...d, lf, v: lf ? vsBase(R, m, series(R, key, d.e), lf.year) : null }; }).filter((d) => isNum(d.v));
-    if (vb.length >= 2) lines.push(`Against ${R.base}: ${vb.map((d) => `${d.e.name} ${fmtChg(m, d.v)} (${d.lf.year})`).join(", ")}.`);
-  }
-  return lines;
-}
-
-// ------------------------------------------------------------------ figures and tables
-// A figure is {title, note, half, legend, draw(el)}; a table is {title, columns, rows, numFmts, total}.
-const yearCats = (R) => R.years.map(String);
-
-function metricBlock(R, key, { chartTitle, primary = false } = {}) {
-  const m = M[key];
-  const data = R.ents.map((e) => ({ e, s: inWindow(R, series(R, key, e)) }));
-  if (!data.some((d) => d.s.length)) return { figs: [], tables: [], xl: [], lines: [], empty: true };
-  const p = palette();
-  const figs = [];
-  const title = chartTitle || m.label;
-  const ytdNote = (() => { const y = data.flatMap((d) => d.s).find((r) => r.ytd); return y ? `${y.year} is year to date${y.months ? ` (${y.months} months)` : ""}.` : ""; })();
-  if (!R.cmp) {
-    const { s } = data[0];
-    figs.push({ title, note: ytdNote, half: true, draw: (el) => columnChart(el, {
-      items: s.map((r) => ({ label: yLabel(r), value: r.value, change: r.change, muted: r.ytd, year: r.year })), noCap: true,
-      format: fmtAxis(m), hoverFormat: (v) => fmtVal(m, v), changeFormat: (c) => fmtChg(m, c), colorFn: (d, pal) => pal.series[0] }) });
-    if (R.an.has("yoy") && s.some((r) => isNum(r.change))) {
-      figs.push({ title: `${title}: change on the previous year`, note: ytdNote ? `${ytdNote.replace(".", "")}, against the same months a year earlier.` : "", half: true,
-        draw: (el) => columnChart(el, { items: s.filter((r) => isNum(r.change)).map((r) => ({ label: yLabel(r), value: isRatio(m) ? r.change : m.kind === "rate01" ? r.change * 100 : r.change, muted: r.ytd })),
-          format: (v) => (isRatio(m) ? fmtChange(v, { digits: 0 }) : `${signed(v, 1)}${m.kind === "level" ? "" : " pts"}`), colorFn: (d, pal) => (d.value >= 0 ? pal.div[4] : pal.div[0]) }) });
-    }
-    if (R.an.has("index") && isRatio(m) && primary) {
-      figs.push(indexFig(R, m, data, title));
-    }
-  } else {
-    const legend = data.map((d) => ({ label: d.e.name, color: p.series[d.e.i] }));
-    const dropYtd = m.kind === "sum";
-    figs.push({ title, legend, half: true, note: dropYtd && ytdNote ? `${ytdNote.replace(".", "")} and left out of the chart; see the table.` : ytdNote,
-      draw: (el) => timeChart(el, { categories: yearCats(R), yFormat: fmtAxis(m),
-        series: data.map((d) => ({ name: d.e.name, color: p.series[d.e.i], data: d.s.filter((r) => !(dropYtd && r.ytd)).map((r) => [String(r.year), r.value]) })) }) });
-    if (R.an.has("index") && isRatio(m)) figs.push(indexFig(R, m, data, title));
-    if (R.an.has("yoy")) {
-      figs.push({ title: `${title}: change on the previous year`, legend, half: true, note: ytdNote ? "The latest year compares the same months a year earlier." : "",
-        draw: (el) => timeChart(el, { categories: yearCats(R), markZero: true, capOutliers: true,
-          yFormat: (v) => (isRatio(m) ? fmtChange(v, { digits: 0 }) : m.kind === "rate01" ? `${signed(v * 100, 1)}` : signed(v, 1)),
-          series: data.map((d) => ({ name: d.e.name, type: "bar", color: p.series[d.e.i], data: d.s.filter((r) => isNum(r.change)).map((r) => [String(r.year), r.change]) })) }) });
-    }
-  }
-  const tables = [];
-  const xl = [];
-  // PDF table: values (and change) by year. Excel adds index and change vs the baseline.
-  const yrs = [...new Set(data.flatMap((d) => d.s.map((r) => r.year)))].sort((a, b) => a - b);
-  const withYoy = R.an.has("yoy");
-  const pdfCols = ["Year", ...data.flatMap((d) => (withYoy ? [R.cmp ? d.e.name : "Value", R.cmp ? `${d.e.name} chg` : "Change"] : [R.cmp ? d.e.name : "Value"]))];
-  const pdfRows = yrs.map((y) => [at(data[0].s, y)?.ytd ? `${y} YTD` : String(y), ...data.flatMap((d) => {
-    const r = at(d.s, y); return withYoy ? [fmtVal(m, r?.value), r ? fmtChg(m, r.change) : "n/a"] : [fmtVal(m, r?.value)];
-  })]);
-  if (R.an.has("tables")) tables.push({ title, columns: pdfCols, rows: pdfRows });
-  const xlCols = [{ label: "Year", fmt: "text" }];
-  const idxBase = (d) => d.s.find((r) => !r.ytd);
-  for (const d of data) {
-    const pre = R.cmp ? `${d.e.name}: ` : "";
-    xlCols.push({ label: `${pre}${valueHead(m)}`, fmt: xlFmt(m) });
-    if (withYoy) xlCols.push({ label: `${pre}change on previous year`, fmt: xlChgFmt(m) });
-    if (R.an.has("index") && isRatio(m)) xlCols.push({ label: `${pre}index (${idxBase(d)?.year ?? "first year"} = 100)`, fmt: "0.0" });
-    if (R.an.has("base")) xlCols.push({ label: `${pre}change vs ${R.base}`, fmt: xlChgFmt(m) });
-  }
-  const xlRows = yrs.map((y) => [at(data[0].s, y)?.ytd ? `${y} YTD` : String(y), ...data.flatMap((d) => {
-    const r = at(d.s, y); const b = idxBase(d);
-    const out = [r?.value ?? null];
-    if (withYoy) out.push(xlChg(m, r?.change));
-    if (R.an.has("index") && isRatio(m)) out.push(r && b && !r.ytd && b.value ? (r.value / b.value) * 100 : null);
-    if (R.an.has("base")) out.push(xlChg(m, r ? vsBase(R, m, series(R, key, d.e), y) : null));
-    return out;
-  })]);
-  xl.push({ title: m.label, columns: xlCols, rows: xlRows });
-  if (R.an.has("cagr")) {
-    const gRows = data.map((d) => { const g = cagr(m, d.s); return [d.e.name, g ? String(g.from) : null, g ? String(g.to) : null, g ? xlChg(m, g.v) : null]; });
-    xl.push({ title: `${m.label}: growth over the period`, columns: [{ label: R.cmp ? "Place" : "Series", fmt: "text" }, { label: "From", fmt: "text" }, { label: "To", fmt: "text" },
-      { label: isRatio(m) ? "Compound annual growth" : "Change over the period", fmt: isRatio(m) ? "0.0%" : xlChgFmt(m) }], rows: gRows });
-  }
-  return { title: m.label, figs, tables, xl, lines: metricCommentary(R, key) };
-}
-
-function indexFig(R, m, data, title) {
-  const p = palette();
-  return { title: `${title}: indexed, first full year = 100`, legend: R.cmp ? data.map((d) => ({ label: d.e.name, color: p.series[d.e.i] })) : null, half: true,
-    draw: (el) => timeChart(el, { categories: yearCats(R), yFormat: (v) => fmtDec(v, 0),
-      series: data.map((d) => { const b = d.s.find((r) => !r.ytd); return { name: d.e.name, color: p.series[d.e.i], data: b ? d.s.filter((r) => !r.ytd).map((r) => [String(r.year), (r.value / b.value) * 100]) : [] }; }) }) };
-}
-
-const valueHead = (m) => m.label;
+// Excel number formats.
 function xlFmt(m) {
   return { sum: "#,##0", rate01: "0.0%", pct: '0.0"%"', index: "0.0", eur: "€#,##0.0", level: m.digits === 0 ? "#,##0" : m.digits === 3 ? "0.000" : m.digits === 2 ? "0.00" : "0.0" }[m.kind];
 }
 const xlChgFmt = (m) => (isRatio(m) ? "0.0%" : '+0.0" pts";-0.0" pts";0.0" pts"');
 const xlChg = (m, c) => (!isNum(c) ? null : m.kind === "rate01" ? c * 100 : c);
 
-// Monthly detail for the final year: pace (standalone) or monthly change (comparison).
+// ------------------------------------------------------------------ IB number style
+// Negatives in brackets, percentage-point changes as "pp", counts in k / m / bn, multiples as "x".
+const neg = (v, s) => (v < 0 ? `(${s})` : s);
+function ibPct(v, d = 1) {
+  if (!isNum(v)) return "n/a";
+  const r = Number((v * 100).toFixed(d));
+  return neg(r, `${Math.abs(r).toFixed(d)}%`);
+}
+function ibPp(x, d = 1) {
+  if (!isNum(x)) return "n/a";
+  const r = Number(x.toFixed(d));
+  return neg(r, `${Math.abs(r).toFixed(d)}pp`);
+}
+function ibVal(m, v) {
+  if (!isNum(v)) return "n/a";
+  const a = Math.abs(v);
+  switch (m.kind) {
+    case "sum": return a >= 1e9 ? `${(v / 1e9).toFixed(2)}bn` : a >= 1e6 ? `${(v / 1e6).toFixed(1)}m` : a >= 1e4 ? `${(v / 1e3).toFixed(0)}k` : a >= 1e3 ? `${(v / 1e3).toFixed(1)}k` : `${Math.round(v)}`;
+    case "rate01": return `${(v * 100).toFixed(1)}%`;
+    case "pct": return neg(v, `${Math.abs(v).toFixed(m.digits ?? 1)}%`);
+    case "eur": return `€${v.toFixed(v < 100 ? 1 : 0)}`;
+    case "index": return v.toFixed(1);
+    default: return neg(v, Math.abs(v).toFixed(m.digits ?? 1));
+  }
+}
+function ibChg(m, c) {
+  if (!isNum(c)) return "n/a";
+  if (isRatio(m)) return ibPct(c);
+  if (m.kind === "rate01") return ibPp(c * 100);
+  if (m.kind === "pct") return ibPp(c);
+  const r = Number(c.toFixed(m.digits ?? 1));
+  return neg(r, Math.abs(r).toFixed(m.digits ?? 1));
+}
+const ibGrowth = (m, g) => (!g ? "n/a" : g.total ? ibChg(m, g.v) : ibPct(g.v));
+const short = (label) => label.replace(/ \(.*\)$/, "");
+const lc = (s) => s.charAt(0).toLowerCase() + s.slice(1);
+const mult = (a, b) => (isNum(a) && isNum(b) && b ? `${(a / b).toFixed(2)}x` : "n/a");
+// "the EU-27" but "Spain".
+const theB = (e) => (e?.code === "EU27_2020" ? `the ${e.name}` : e?.name);
+const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) ? 0 : n % 10] || "th"}`;
+const listJoin = (a) => (a.length <= 1 ? a.join("") : `${a.slice(0, -1).join(", ")} and ${a.at(-1)}`);
+
+// Which direction is "better" for ranking and bold leaders; null = no judgement.
+const BETTER = {
+  nights: "high", arrivals: "high", nights_foreign: "high", nights_domestic: "high", hotel_nights: "high", bed_place_occupancy_rate: "high",
+  room_occupancy_rate: "high", avg_length_of_stay: "high", peak_two_month_share: "low", platform_nights: "high", air_passengers: "high",
+  air_passengers_international: "high", unemployment_rate_pct: "low", consumer_confidence_balance: "high", bond_yield_10y_pct: "low",
+  gdp_growth: "high", share_eu: "high", share_of_country_nights: "high", passengers: "high", share_country_air: "high",
+  adr_es: "high", revpar_es: "high", rev_night_pt: "high", nights_per_resident: "high", accommodation_turnover_index: "high",
+};
+
+// ------------------------------------------------------------------ participants and figures
+// Participants: the chosen places plus, for a standalone report, the benchmark (shown in grey).
+const parts = (R) => (R.bench ? [...R.ents, R.bench] : R.ents);
+const colorOf = (p, e) => (e.bench ? p.context : p.series[e.i]);
+const endYear = (R) => R.years.at(-1);
+function lastOf(R, key, e) { return inWindow(R, series(R, key, e)).at(-1) || null; }
+function facts(R, key, e) {
+  const m = M[key];
+  const s = inWindow(R, series(R, key, e));
+  const last = s.at(-1) || null;
+  const lf = s.filter((r) => !r.ytd).at(-1) || null;
+  return { m, s, last, lf, g: cagr(m, s), vb: lf ? vsBase(R, m, series(R, key, e), lf.year) : null };
+}
+const hasData = (R, key, list = R.ents) => list.some((e) => inWindow(R, series(R, key, e)).length);
+const yearTag = (R, r) => (!r ? "" : r.ytd ? ` (${r.year} YTD)` : r.year !== endYear(R) ? ` (${r.year})` : "");
+
+// Comparative table: metrics as rows, a column group per participant.
+function compTable(R, keys) {
+  const P = parts(R);
+  const subs = [["value", "Value"], ...(R.an.has("yoy") ? [["yoy", "YoY"]] : []), ...(R.an.has("cagr") ? [["cagr", "CAGR"]] : []),
+    ...(R.an.has("base") && P.length <= 2 ? [["base", `vs ${R.base}`]] : [])];
+  const rows = [];
+  const notes = new Set();
+  for (const k of keys) {
+    const m = M[k];
+    const cells = P.map((e) => {
+      const f = facts(R, k, e);
+      if (f.last && f.last.year !== endYear(R)) notes.add(`${short(m.label)}: latest year ${f.last.year}`);
+      return {
+        value: { v: f.last?.value, t: ibVal(m, f.last?.value) }, yoy: { v: f.last?.change, t: ibChg(m, f.last?.change) },
+        cagr: { v: f.g?.v, t: ibGrowth(m, f.g) }, base: { v: f.vb, t: ibChg(m, f.vb) },
+      };
+    });
+    // Bold the leader in each column among the chosen places (comparisons only).
+    const lead = {};
+    if (R.cmp && BETTER[k]) {
+      for (const [sk] of subs) {
+        const vals = cells.map((c, i) => ({ i, v: c[sk].v })).filter((x) => isNum(x.v) && !P[x.i].bench);
+        if (vals.length >= 2) lead[sk] = vals.reduce((a, x) => ((BETTER[k] === "high" ? x.v > a.v : x.v < a.v) ? x : a)).i;
+      }
+    }
+    rows.push({ key: k, label: m.label, cells: cells.map((c, i) => subs.map(([sk]) => ({ t: c[sk].t, v: c[sk].v, bold: lead[sk] === i }))) });
+  }
+  const ytd = P.map((e) => lastOf(R, keys[0], e)).find((r) => r?.ytd);
+  if (ytd) notes.add(`YTD = ${ytd.year} to ${monthName(ytd.months)}; YoY compares the same months`);
+  return { groups: P.map((e) => ({ label: e.name, span: subs.length, bench: !!e.bench })), subs: subs.map(([, l]) => l), rows, notes: [...notes] };
+}
+function compTableXl(R, title, keys) {
+  const P = parts(R);
+  const subs = [["value", "value"], ...(R.an.has("yoy") ? [["yoy", "change"]] : []), ...(R.an.has("cagr") ? [["cagr", "compound growth"]] : []), ...(R.an.has("base") ? [["base", `vs ${R.base}`]] : [])];
+  const columns = [{ label: "Metric", fmt: "text" }, ...P.flatMap((e) => subs.map(([, l]) => ({ label: `${e.name}: ${l}`, fmt: "General" })))];
+  const rows = [], cellFmts = [];
+  for (const k of keys) {
+    const m = M[k];
+    const r = [m.label], f = ["text"];
+    for (const e of P) {
+      const x = facts(R, k, e);
+      for (const [sk] of subs) {
+        if (sk === "value") { r.push(x.last?.value ?? null); f.push(xlFmt(m)); }
+        if (sk === "yoy") { r.push(xlChg(m, x.last?.change)); f.push(xlChgFmt(m)); }
+        if (sk === "cagr") { r.push(x.g ? (x.g.total ? xlChg(m, x.g.v) : x.g.v) : null); f.push(x.g && !x.g.total ? "0.0%" : xlChgFmt(m)); }
+        if (sk === "base") { r.push(xlChg(m, x.vb)); f.push(xlChgFmt(m)); }
+      }
+    }
+    rows.push(r); cellFmts.push(f);
+  }
+  return { title, columns, rows, cellFmts };
+}
+// Year-by-year table for one metric across participants (appendix and Excel).
+function yearTable(R, key) {
+  const m = M[key];
+  const P = parts(R).filter((e) => inWindow(R, series(R, key, e)).length);
+  const yrs = [...new Set(P.flatMap((e) => inWindow(R, series(R, key, e)).map((r) => r.year)))].sort((a, b) => a - b);
+  const withYoy = R.an.has("yoy");
+  const pdf = {
+    title: m.label,
+    columns: ["Year", ...P.flatMap((e) => (withYoy ? [e.name, "YoY"] : [e.name]))],
+    rows: yrs.map((y) => {
+      const ytd = P.some((e) => at(series(R, key, e), y)?.ytd);
+      return [ytd ? `${y} YTD` : String(y), ...P.flatMap((e) => { const r = at(inWindow(R, series(R, key, e)), y); return withYoy ? [ibVal(m, r?.value), ibChg(m, r?.change)] : [ibVal(m, r?.value)]; })];
+    }),
+  };
+  const xl = {
+    title: m.label,
+    columns: [{ label: "Year", fmt: "text" }, ...P.flatMap((e) => [{ label: `${e.name}: value`, fmt: xlFmt(m) }, ...(withYoy ? [{ label: `${e.name}: change`, fmt: xlChgFmt(m) }] : [])])],
+    rows: pdf.rows.map((r, i) => [r[0], ...P.flatMap((e) => { const rr = at(inWindow(R, series(R, key, e)), yrs[i]); return withYoy ? [rr?.value ?? null, xlChg(m, rr?.change)] : [rr?.value ?? null]; })]),
+  };
+  return { pdf, xl };
+}
+
+// ------------------------------------------------------------------ IB-style charts
+// Data labels instead of dense axes, light rules, legend above, benchmark in grey (dashed).
+function ibBase(p) {
+  return { backgroundColor: "transparent", animation: false, textStyle: { fontFamily: css("--font"), color: p.text2, fontSize: 9 },
+    tooltip: { trigger: "axis", backgroundColor: "#fff", borderColor: p.grid, textStyle: { color: p.text, fontSize: 10 } } };
+}
+function ibColumns(el, { cats, series: ss, fmt, labels = true, markZero = true }) {
+  const p = palette();
+  if (!ss.some((s) => s.values.some(isNum))) return empty(el);
+  const showLabels = labels && cats.length * ss.length <= 32;
+  const chart = initChart(el);
+  chart.setOption({
+    ...ibBase(p),
+    grid: { left: showLabels ? 4 : 36, right: 6, top: 16, bottom: 18, containLabel: !showLabels },
+    xAxis: { type: "category", data: cats, axisTick: { show: false }, axisLine: { lineStyle: { color: p.axis } }, axisLabel: { color: p.text2, fontSize: 9, hideOverlap: true } },
+    yAxis: { type: "value", show: !showLabels, splitLine: { lineStyle: { color: p.grid } }, axisLabel: { color: p.muted, fontSize: 8.5, formatter: fmt } },
+    series: ss.map((s) => ({
+      name: s.name, type: "bar", barGap: "8%", barMaxWidth: 26, data: s.values.map((v) => (isNum(v) ? v : null)),
+      itemStyle: { color: s.color }, label: { show: showLabels, position: "top", fontSize: 8, color: p.text, formatter: (x) => fmt(x.value), distance: 2 },
+      ...(markZero ? { markLine: { silent: true, symbol: "none", label: { show: false }, lineStyle: { color: p.text2, width: 0.8, type: "solid" }, data: [{ yAxis: 0 }] } } : {}),
+    })),
+  });
+  return chart;
+}
+function ibLines(el, { cats, series: ss, fmt, endLabels = true }) {
+  const p = palette();
+  if (!ss.some((s) => s.values.some(isNum))) return empty(el);
+  const chart = initChart(el);
+  chart.setOption({
+    ...ibBase(p),
+    grid: { left: 34, right: endLabels ? 44 : 8, top: 12, bottom: 18 },
+    xAxis: { type: "category", data: cats, boundaryGap: false, axisTick: { show: false }, axisLine: { lineStyle: { color: p.axis } }, axisLabel: { color: p.text2, fontSize: 9, hideOverlap: true } },
+    yAxis: { type: "value", scale: true, splitNumber: 4, splitLine: { lineStyle: { color: p.grid, type: "dashed" } }, axisLabel: { color: p.muted, fontSize: 8.5, formatter: fmt } },
+    series: ss.map((s) => ({
+      name: s.name, type: "line", data: s.values.map((v) => (isNum(v) ? v : null)), showSymbol: false, connectNulls: false,
+      lineStyle: { color: s.color, width: s.bench ? 1.5 : 2.2, type: s.bench ? "dashed" : "solid" }, itemStyle: { color: s.color },
+      endLabel: { show: endLabels, formatter: (x) => fmt(x.value), color: s.color, fontSize: 8.5, fontWeight: 700, distance: 4 },
+    })),
+  });
+  return chart;
+}
+function ibHBars(el, { cats, series: ss, fmt }) {
+  const p = palette();
+  if (!ss.some((s) => s.values.some(isNum))) return empty(el);
+  const chart = initChart(el);
+  chart.setOption({
+    ...ibBase(p), tooltip: { ...ibBase(p).tooltip, axisPointer: { type: "shadow" } },
+    grid: { left: 4, right: 36, top: 4, bottom: 4, containLabel: true },
+    xAxis: { type: "value", show: false },
+    yAxis: { type: "category", data: cats, inverse: true, axisTick: { show: false }, axisLine: { lineStyle: { color: p.axis } }, axisLabel: { color: p.text, fontSize: 8.5, width: 120, overflow: "truncate" } },
+    series: ss.map((s) => ({
+      name: s.name, type: "bar", barGap: "10%", barMaxWidth: 12, data: s.values.map((v) => (isNum(v) ? v : null)), itemStyle: { color: s.color },
+      label: { show: true, position: "right", fontSize: 8, color: p.text, formatter: (x) => fmt(x.value), distance: 2 },
+    })),
+  });
+  return chart;
+}
+const legendOf = (R, list = parts(R)) => { const p = palette(); return list.map((e) => ({ label: e.name, color: colorOf(p, e) })); };
+
+// Standard charts for one metric across participants.
+function trendChart(R, key, { forceIndex = false } = {}) {
+  const m = M[key];
+  const P = parts(R).filter((e) => inWindow(R, series(R, key, e)).length);
+  if (!P.length) return null;
+  const p = palette();
+  const cats = R.years.map(String);
+  const useIndex = isRatio(m) && (forceIndex || (R.an.has("index") && P.length > 1));
+  if (useIndex) {
+    const base0 = Math.max(...P.map((e) => inWindow(R, series(R, key, e)).find((r) => !r.ytd)?.year ?? R.years[0]));
+    return { title: `${short(m.label)}: indexed (${base0} = 100)`, legend: legendOf(R, P),
+      note: "Full years only.",
+      draw: (el) => ibLines(el, { cats, fmt: (v) => fmtDec(v, 0),
+        series: P.map((e) => { const s = series(R, key, e); const b = at(s, base0); return { name: e.name, bench: e.bench, color: colorOf(p, e),
+          values: R.years.map((y) => { const r = at(s, y); return r && b && !r.ytd ? (r.value / b.value) * 100 : null; }) }; }) }) };
+  }
+  if (m.kind === "sum" || m.kind === "eur" || P.length === 1) {
+    const list = m.kind === "sum" ? P.filter((e) => !e.bench) : P;
+    return { title: m.label, legend: list.length > 1 ? legendOf(R, list) : null,
+      draw: (el) => ibColumns(el, { cats: R.years.map((y) => (at(series(R, key, list[0]), y)?.ytd ? `${y}*` : String(y))), fmt: (v) => ibVal(m, v),
+        series: list.map((e) => ({ name: e.name, color: colorOf(p, e), values: R.years.map((y) => at(series(R, key, e), y)?.value) })) }),
+      note: list.some((e) => at(series(R, key, e), endYear(R))?.ytd) ? "* Year to date." : "" };
+  }
+  return { title: m.label, legend: legendOf(R, P),
+    draw: (el) => ibLines(el, { cats, fmt: (v) => ibVal(m, v), series: P.map((e) => ({ name: e.name, bench: e.bench, color: colorOf(p, e), values: R.years.map((y) => at(series(R, key, e), y)?.value) })) }) };
+}
+function yoyChart(R, key) {
+  const m = M[key];
+  const P = parts(R).filter((e) => inWindow(R, series(R, key, e)).some((r) => isNum(r.change)));
+  if (!P.length) return null;
+  const p = palette();
+  const yrs = R.years.slice(-Math.min(R.years.length, P.length > 2 ? 5 : 8));
+  const val = (e, y) => { const c = at(series(R, key, e), y)?.change; return isNum(c) ? (m.kind === "rate01" ? c * 100 : isRatio(m) ? c * 100 : c) : null; };
+  const fmt = (v) => (isRatio(m) ? neg(v, `${Math.abs(v).toFixed(0)}%`) : neg(v, `${Math.abs(v).toFixed(1)}`));
+  return { title: `${short(m.label)}: ${isRatio(m) ? "change" : "change (pp)"} on prior year`, legend: legendOf(R, P),
+    note: P.some((e) => at(series(R, key, e), endYear(R))?.ytd) ? "Latest year compares the same months a year earlier." : "",
+    draw: (el) => ibColumns(el, { cats: yrs.map(String), fmt, series: P.map((e) => ({ name: e.name, color: colorOf(p, e), values: yrs.map((y) => val(e, y)) })) }) };
+}
+
+// Monthly series for an entity (nights, or passengers for airports; national air passengers for an airport benchmark).
 function monthlyRows(R, e) {
-  const { D, st } = R;
-  if (st.level === "country") return (D.country_monthly || []).filter((r) => r.geo_code === e.code && isNum(r.nights)).map((r) => ({ month: r.month, v: r.nights }));
-  if (st.level === "region") return (D.region_monthly || []).filter((r) => r.geo_code === e.code && isNum(r.nights)).map((r) => ({ month: r.month, v: r.nights }));
+  const { D } = R;
+  if (e.level === "country") {
+    const f = e.viaAir ? "air_passengers" : "nights";
+    return (D.country_monthly || []).filter((r) => r.geo_code === e.code && isNum(r[f])).map((r) => ({ month: r.month, v: r[f] }));
+  }
+  if (e.level === "region") return (D.region_monthly || []).filter((r) => r.geo_code === e.code && isNum(r.nights)).map((r) => ({ month: r.month, v: r.nights }));
   return (D.airports_monthly || []).filter((r) => r.airport_code === e.code && isNum(r.passengers)).map((r) => ({ month: r.month, v: r.passengers }));
 }
 const MONTHS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
-
-function monthlyBlock(R, label) {
-  const p = palette();
-  const y = R.years.at(-1);
-  const data = R.ents.map((e) => ({ e, idx: new Map(monthlyRows(R, e).map((r) => [r.month, r.v])) })).filter((d) => [...d.idx.keys()].some((k) => k.startsWith(String(y))));
-  if (!data.length) return null;
-  const val = (d, yy, mm) => d.idx.get(`${yy}-${mm}`);
-  const lines = [];
-  const xlRows = MONTHS.map((mm) => [monthName(+mm), ...data.flatMap((d) => [val(d, y, mm) ?? null, val(d, y - 1, mm) ?? null, ratio(val(d, y, mm), val(d, y - 1, mm))])]);
-  const xl = { title: `${label} by month, ${y}`, columns: [{ label: "Month", fmt: "text" }, ...data.flatMap((d) => {
-    const pre = R.cmp ? `${d.e.name}: ` : ""; return [{ label: `${pre}${y}`, fmt: "#,##0" }, { label: `${pre}${y - 1}`, fmt: "#,##0" }, { label: `${pre}change`, fmt: "0.0%" }];
-  })], rows: xlRows };
-  if (R.an.has("commentary")) {
-    for (const d of data) {
-      const ch = MONTHS.map((mm) => ({ mm, c: ratio(val(d, y, mm), val(d, y - 1, mm)) })).filter((x) => isNum(x.c));
-      if (!ch.length) continue;
-      const best = ch.reduce((a, x) => (x.c > a.c ? x : a)), worst = ch.reduce((a, x) => (x.c < a.c ? x : a));
-      lines.push(`${R.cmp ? `${d.e.name}: ` : ""}${ch.length} months reported for ${y}; strongest month on a year earlier ${monthName(+best.mm)} (${fmtChange(best.c)}), weakest ${monthName(+worst.mm)} (${fmtChange(worst.c)}).`);
-    }
-  }
-  const fig = !R.cmp
-    ? { title: `${label} by month: ${y} vs ${y - 1} and ${R.base}`, half: false, legend: [{ label: String(y), color: p.series[0] }, { label: String(y - 1), color: p.series[1] }, { label: String(R.base), color: p.context }],
-      draw: (el) => timeChart(el, { categories: MONTHS, xFormat: (v) => monthName(+v), yFormat: (v) => fmtNum(v, 1),
-        series: [[y, p.series[0], 2.5], [y - 1, p.series[1], 2], [R.base, p.context, 2]].map(([yy, color, width]) => ({ name: String(yy), color, width, data: MONTHS.map((mm) => [mm, val(data[0], yy, mm) ?? null]) })) }) }
-    : { title: `${label}: change on a year earlier by month, ${y}`, half: false, legend: data.map((d) => ({ label: d.e.name, color: p.series[d.e.i] })),
-      draw: (el) => timeChart(el, { categories: MONTHS, xFormat: (v) => monthName(+v), markZero: true, yFormat: (v) => fmtChange(v, { digits: 0 }),
-        series: data.map((d) => ({ name: d.e.name, color: p.series[d.e.i], data: MONTHS.map((mm) => [mm, ratio(val(d, y, mm), val(d, y - 1, mm))]) })) }) };
-  return { title: `Monthly detail, ${y}`, figs: [fig], xl: [xl], lines };
-}
 const ratio = (a, b) => (isNum(a) && isNum(b) && b ? a / b - 1 : null);
-
-function seasonalityBlock(R, label) {
-  const p = palette();
-  const data = R.ents.map((e) => {
-    const idx = new Map(monthlyRows(R, e).map((r) => [r.month, r.v]));
-    const full = R.years.slice().reverse().find((y) => MONTHS.every((mm) => isNum(idx.get(`${y}-${mm}`))));
-    const prof = (y) => { if (!MONTHS.every((mm) => isNum(idx.get(`${y}-${mm}`)))) return null; const t = MONTHS.reduce((a, mm) => a + idx.get(`${y}-${mm}`), 0); return MONTHS.map((mm) => idx.get(`${y}-${mm}`) / t); };
-    const first = R.years.find((y) => prof(y));
-    return { e, full, prof: full ? prof(full) : null, firstYear: first !== full ? first : null, firstProf: first !== full && first ? prof(first) : null };
-  }).filter((d) => d.prof);
-  if (!data.length) return null;
-  const lines = [];
-  if (R.an.has("commentary")) {
-    for (const d of data) {
-      const ord = d.prof.map((v, i) => ({ v, i })).sort((a, b) => b.v - a.v);
-      const two = ord[0].v + ord[1].v;
-      let t = `${R.cmp ? `${d.e.name}: ` : ""}in ${d.full} the busiest month was ${monthName(ord[0].i + 1)} with ${fmtPct(ord[0].v, 1)} of the year's ${label.toLowerCase()}; ${monthName(ord[0].i + 1)} and ${monthName(ord[1].i + 1)} together took ${fmtPct(two, 1)}.`;
-      if (d.firstProf) { const o2 = [...d.firstProf].sort((a, b) => b - a); t += ` In ${d.firstYear} the two busiest months took ${fmtPct(o2[0] + o2[1], 1)}.`; }
-      lines.push(t);
-    }
+function profiles(R, e) {
+  const idx = new Map(monthlyRows(R, e).map((r) => [r.month, r.v]));
+  const out = new Map();
+  for (const y of R.years) {
+    const vals = MONTHS.map((mm) => idx.get(`${y}-${mm}`));
+    if (vals.every(isNum)) { const t = vals.reduce((a, v) => a + v, 0); out.set(y, vals.map((v) => v / t)); }
   }
-  const fig = !R.cmp
-    ? { title: `Share of annual ${label.toLowerCase()} by month`, half: false,
-      legend: [{ label: String(data[0].full), color: p.series[0] }, ...(data[0].firstProf ? [{ label: String(data[0].firstYear), color: p.context }] : [])],
-      draw: (el) => timeChart(el, { categories: MONTHS, xFormat: (v) => monthName(+v), yFormat: (v) => fmtPct(v, 0),
-        series: [{ name: String(data[0].full), color: p.series[0], width: 2.5, data: MONTHS.map((mm, i) => [mm, data[0].prof[i]]) },
-          ...(data[0].firstProf ? [{ name: String(data[0].firstYear), color: p.context, data: MONTHS.map((mm, i) => [mm, data[0].firstProf[i]]) }] : [])] }) }
-    : { title: `Share of annual ${label.toLowerCase()} by month (latest full year)`, half: false, legend: data.map((d) => ({ label: `${d.e.name} (${d.full})`, color: p.series[d.e.i] })),
-      draw: (el) => timeChart(el, { categories: MONTHS, xFormat: (v) => monthName(+v), yFormat: (v) => fmtPct(v, 0),
-        series: data.map((d) => ({ name: d.e.name, color: p.series[d.e.i], data: MONTHS.map((mm, i) => [mm, d.prof[i]]) })) }) };
-  const xl = { title: `Share of annual ${label.toLowerCase()} by month`, columns: [{ label: "Month", fmt: "text" },
-    ...data.flatMap((d) => [{ label: `${R.cmp ? `${d.e.name}: ` : ""}${d.full}`, fmt: "0.0%" }, ...(d.firstProf ? [{ label: `${R.cmp ? `${d.e.name}: ` : ""}${d.firstYear}`, fmt: "0.0%" }] : [])])],
-  rows: MONTHS.map((mm, i) => [monthName(+mm), ...data.flatMap((d) => [d.prof[i], ...(d.firstProf ? [d.firstProf[i]] : [])])]), total: ["Total", ...data.flatMap((d) => [1, ...(d.firstProf ? [1] : [])])] };
-  return { title: "Monthly profile", figs: [fig], xl: [xl], lines };
+  return { idx, out };
 }
-
-// Merge blocks into one section; each block keeps its own heading, commentary, charts and tables.
-function combine(...blocks) {
-  const bs = blocks.filter((b) => b && !b.empty && ((b.lines?.length) || (b.figs?.length) || (b.tables?.length) || (b.xl?.length)));
-  if (!bs.length) return null;
-  return { blocks: bs.map((b) => ({ title: b.title, lines: b.lines || [], figs: b.figs || [], tables: b.tables || [] })), xl: bs.flatMap((b) => b.xl || []) };
+function seasonStats(prof) {
+  const ord = prof.map((v, i) => ({ v, i })).sort((a, b) => b.v - a.v);
+  return { peak: ord[0].i, peakShare: ord[0].v, two: ord[0].v + ord[1].v, off: [0, 1, 2, 10, 11].reduce((a, i) => a + prof[i], 0) };
 }
-const metrics = (R, keys, opts) => keys.map((k, i) => metricBlock(R, k, { primary: i === 0, ...opts }));
-
-// Ranked list table for one entity (regions, sources, airports, origins, routes).
-function rankedBlock(R, { title, nameLabel, items, valueLabel, valueFmt = "#,##0", shareLabel = "Share", extra = [], total, chart = true, chartValue = "share" }) {
-  // items: [{name, value, share, ...extra}]
+function monthlyChart(R, label) {
+  const y = endYear(R);
   const p = palette();
-  const cols = [{ label: nameLabel, fmt: "text" }, { label: valueLabel, fmt: valueFmt },
-    { label: shareLabel, fmt: "0.0%" }, ...extra.map((x) => ({ label: x.label, fmt: x.fmt }))];
-  const rows = items.map((it) => [it.name, it.value, it.share, ...extra.map((x) => it[x.key] ?? null)]);
-  const pdf = { title, columns: cols.map((c) => c.label), rows: items.map((it) => [it.name, fmtPrecise(it.value), fmtPct(it.share, 1), ...extra.map((x) => x.pdf(it[x.key]))]) };
-  const fig = chart ? { title, half: true, draw: (el) => rankBars(el, { items: items.slice(0, 10).map((it) => ({ label: it.name, value: chartValue === "share" ? it.share : it.value })),
-    format: chartValue === "share" ? (v) => fmtPct(v, 1) : (v) => fmtNum(v), colorFn: () => p.series[0] }) } : null;
-  return { fig, pdf, xl: { title, columns: cols, rows, total: total ? [total.name, total.value, total.share ?? 1, ...extra.map(() => null)] : null } };
+  const P = parts(R).map((e) => ({ e, idx: profiles(R, e).idx })).filter((d) => MONTHS.some((mm) => isNum(ratio(d.idx.get(`${y}-${mm}`), d.idx.get(`${y - 1}-${mm}`)))));
+  if (!P.length) return null;
+  return { title: `${label}: change on a year earlier by month, ${y}`, legend: legendOf(R, P.map((d) => d.e)),
+    draw: (el) => ibLines(el, { cats: MONTHS.map((mm) => monthName(+mm)), fmt: (v) => neg(v, `${Math.abs(v).toFixed(0)}%`), endLabels: false,
+      series: P.map((d) => ({ name: d.e.name, bench: d.e.bench, color: colorOf(p, d.e), values: MONTHS.map((mm) => { const r = ratio(d.idx.get(`${y}-${mm}`), d.idx.get(`${y - 1}-${mm}`)); return isNum(r) ? r * 100 : null; }) })) }) };
+}
+
+// ------------------------------------------------------------------ conclusions
+// Rule-based: who leads on scale, growth and recovery, and by how much.
+function metricConclusions(R, keys) {
+  if (!R.an.has("commentary")) return { headline: null, bullets: [] };
+  const P = parts(R);
+  const k0 = keys.find((k) => hasData(R, k));
+  if (!k0) return { headline: null, bullets: [] };
+  const m0 = M[k0];
+  const F = (k, list = R.ents) => list.map((e) => ({ e, ...facts(R, k, e) })).filter((d) => d.last);
+  let headline = null;
+  const bullets = [];
+  if (R.cmp) {
+    const d = F(k0);
+    if (d.length >= 2) {
+      const better = BETTER[k0] || "high";
+      const byVal = [...d].sort((a, b) => (better === "high" ? b.last.value - a.last.value : a.last.value - b.last.value));
+      const byG = d.filter((x) => x.g).sort((a, b) => b.g.v - a.g.v);
+      if (m0.kind === "sum") {
+        const lead = byVal[0], next = byVal[1];
+        headline = byG.length >= 2 && byG[0].e !== lead.e
+          ? `${lead.e.name} is the ${d.length > 2 ? "largest" : "larger"} market (${mult(lead.last.value, next.last.value)} ${next.e.name}); ${byG[0].e.name} is growing ${d.length > 2 ? "fastest" : "faster"} at ${ibPct(byG[0].g.v)} a year v ${lead.g ? `${ibPct(lead.g.v)} for ${lead.e.name}` : ibPct(byG[1].g.v)}`
+          : `${lead.e.name} leads on ${lc(short(m0.label))} on both scale (${ibVal(m0, lead.last.value)}) and growth${byG[0] ? ` (${ibPct(byG[0].g.v)} CAGR)` : ""}`;
+      } else if (BETTER[k0]) {
+        const a = byVal[0], z = byVal.at(-1);
+        headline = `${a.e.name} has the ${better === "high" ? "highest" : "lowest"} ${lc(short(m0.label))} at ${ibVal(m0, a.last.value)}, ${ibChg(m0, Math.abs(chgOf(m0, a.last.value, z.last.value)))} ${isRatio(m0) ? "above" : "ahead of"} ${z.e.name}`;
+      } else {
+        const hi = [...d].sort((a, b) => b.last.value - a.last.value);
+        headline = `${short(m0.label)}: ${hi.map((x) => `${x.e.name} ${ibVal(m0, x.last.value)}`).join(", ")}`;
+      }
+    }
+    for (const k of keys.filter((k) => hasData(R, k)).slice(0, 4)) {
+      const m = M[k];
+      const dd = F(k);
+      if (!dd.length) continue;
+      bullets.push(`${short(m.label)}: ${dd.map((x) => `${x.e.name} ${ibVal(m, x.last.value)}${R.an.has("cagr") && x.g ? ` (${ibGrowth(m, x.g)}${x.g.total ? "" : " CAGR"})` : ""}`).join(" v ")}.`);
+    }
+    if (R.an.has("base")) {
+      const vb = F(k0).filter((x) => isNum(x.vb));
+      if (vb.length >= 2) bullets.push(`Versus ${R.base}: ${vb.map((x) => `${x.e.name} ${ibChg(m0, x.vb)}`).join(", ")}; ${vb.sort((a, b) => b.vb - a.vb)[0].e.name} has recovered furthest.`);
+    }
+  } else {
+    const [me] = F(k0, [R.ents[0]]);
+    const [bm] = R.bench ? F(k0, [R.bench]) : [];
+    if (me) {
+      if (bm && m0.kind === "sum" && me.g && bm.g) {
+        headline = `${me.e.name} ${me.g.v >= bm.g.v ? "outgrew" : "lagged"} ${theB(bm.e)}: ${lc(short(m0.label))} ${ibPct(me.g.v)} a year v ${ibPct(bm.g.v)} (${me.g.from}-${me.g.to})`;
+      } else if (bm && isNum(me.last.value) && isNum(bm.last.value) && m0.kind !== "sum") {
+        const dlt = chgOf(m0, me.last.value, bm.last.value);
+        headline = `${short(m0.label)} of ${ibVal(m0, me.last.value)} is ${ibChg(m0, Math.abs(dlt))} ${dlt >= 0 ? "above" : "below"} ${theB(bm.e)} (${ibVal(m0, bm.last.value)})`;
+      } else {
+        headline = `${me.e.name}: ${lc(short(m0.label))} ${ibVal(m0, me.last.value)}${yearTag(R, me.last)}${me.g ? `, ${ibGrowth(m0, me.g)}${me.g.total ? " over the period" : " a year"}` : ""}`;
+      }
+    }
+    for (const k of keys.filter((k) => hasData(R, k)).slice(0, 4)) {
+      const m = M[k];
+      const [a] = F(k, [R.ents[0]]);
+      if (!a) continue;
+      const [b] = R.bench ? F(k, [R.bench]) : [];
+      let t = `${short(m.label)}: ${ibVal(m, a.last.value)}${yearTag(R, a.last)}`;
+      if (R.an.has("yoy") && isNum(a.last.change)) t += `, ${ibChg(m, a.last.change)} YoY`;
+      if (R.an.has("cagr") && a.g) t += `, ${ibGrowth(m, a.g)}${a.g.total ? " since " + a.g.from : " CAGR"}`;
+      if (b) t += `; ${b.e.name} ${ibVal(m, b.last.value)}${R.an.has("cagr") && b.g ? ` (${ibGrowth(m, b.g)}${b.g.total ? "" : " CAGR"})` : ""}`;
+      bullets.push(`${t}.`);
+    }
+    if (R.an.has("base") && me && isNum(me.vb)) bullets.push(`${me.lf.year} stands ${ibChg(m0, me.vb)} against ${R.base}.`);
+  }
+  return { headline, bullets };
 }
 
 // ------------------------------------------------------------------ sections
-const KPI_KEYS = {
-  country: ["nights", "nights_foreign", "arrivals", "bed_place_occupancy_rate", "avg_length_of_stay", "foreign_share", "air_passengers", "platform_nights", "hicp_accommodation_pct", "unemployment_rate_pct"],
-  region: ["nights", "nights_foreign", "foreign_share", "share_of_country_nights", "platform_nights", "peak_two_month_share"],
-  airport: ["passengers", "share_country_air"],
-};
-
-function summarySection(R) {
-  const keys = KPI_KEYS[R.st.level].filter((k) => R.ents.some((e) => inWindow(R, series(R, k, e)).length));
-  const lines = [];
-  const xlCols = [{ label: "Metric", fmt: "text" }];
-  const pdfCols = ["Metric"];
-  for (const e of R.ents) {
-    const pre = R.cmp ? `${e.name}: ` : "";
-    pdfCols.push(R.cmp ? e.name : "Latest", ...(R.an.has("yoy") ? [R.cmp ? "chg" : "Change"] : []), ...(!R.cmp && R.an.has("cagr") ? ["Growth a year"] : []), ...(!R.cmp && R.an.has("base") ? [`vs ${R.base}`] : []));
-    xlCols.push({ label: `${pre}year`, fmt: "text" }, { label: `${pre}value`, fmt: "General" }, ...(R.an.has("yoy") ? [{ label: `${pre}change`, fmt: "General" }] : []),
-      ...(R.an.has("cagr") ? [{ label: `${pre}compound growth`, fmt: "0.0%" }] : []), ...(R.an.has("base") ? [{ label: `${pre}vs ${R.base}`, fmt: "General" }] : []));
-  }
-  const pdfRows = [], xlRows = [], rowFmts = [];
-  for (const k of keys) {
-    const m = M[k];
-    const pdf = [m.label], xr = [m.label];
-    for (const e of R.ents) {
-      const s = inWindow(R, series(R, k, e));
-      const last = s.at(-1);
-      const g = cagr(m, s);
-      const lf = s.filter((r) => !r.ytd).at(-1);
-      const vb = lf ? vsBase(R, m, series(R, k, e), lf.year) : null;
-      pdf.push(last ? `${fmtVal(m, last.value)}${last.year !== R.years.at(-1) || last.ytd ? ` (${yLabel(last)})` : ""}` : "n/a",
-        ...(R.an.has("yoy") ? [last ? fmtChg(m, last.change) : "n/a"] : []),
-        ...(!R.cmp && R.an.has("cagr") ? [g && !g.total ? fmtChange(g.v) : g ? fmtChg(m, g.v) : "n/a"] : []),
-        ...(!R.cmp && R.an.has("base") ? [isNum(vb) ? fmtChg(m, vb) : "n/a"] : []));
-      xr.push(last ? yLabel(last) : null, last?.value ?? null, ...(R.an.has("yoy") ? [xlChg(m, last?.change)] : []),
-        ...(R.an.has("cagr") ? [g && !g.total ? g.v : null] : []), ...(R.an.has("base") ? [xlChg(m, vb)] : []));
-    }
-    pdfRows.push(pdf); xlRows.push(xr); rowFmts.push({ value: xlFmt(m), change: xlChgFmt(m) });
-  }
-  // Headline commentary from the lead metrics.
-  const leads = { country: ["nights", "bed_place_occupancy_rate", "foreign_share"], region: ["nights", "share_of_country_nights", "foreign_share"], airport: ["passengers", "share_country_air"] }[R.st.level];
-  for (const k of leads) lines.push(...metricCommentary(R, k, { noExtremes: true }).slice(0, 2));
-  if (R.an.has("intensity") && R.st.level === "country") {
-    const ints = R.ents.map((e) => ({ e, r: inWindow(R, series(R, "nights_per_resident", e)).filter((x) => !x.ytd).at(-1) })).filter((d) => d.r);
-    if (ints.length && R.an.has("commentary")) lines.push(`Nights per resident: ${ints.map((d) => `${d.e.name} ${fmtDec(d.r.value, 1)} (${d.r.year})`).join(", ")}.`);
-  }
-  // Per-cell number formats for the summary table (rows mix metrics).
-  const cellFmts = xlRows.map((_, ri) => xlCols.map((c) => (c.label.endsWith("value") ? rowFmts[ri].value : /change$|vs \d{4}$/.test(c.label) ? rowFmts[ri].change : c.fmt)));
+// Each returns one slide: {headline, bullets, table (comparative), charts, appendix, xl}.
+function metricSection(R, keys, { extraCharts = [], appendixKeys } = {}) {
+  const ks = keys.filter((k) => hasData(R, k));
+  if (!ks.length) return null;
+  const { headline, bullets } = metricConclusions(R, ks);
+  const k0 = ks[0];
+  const charts = [trendChart(R, k0), R.an.has("yoy") ? yoyChart(R, k0) : trendChart(R, ks[1] || k0, { forceIndex: false }), ...extraCharts].filter(Boolean).slice(0, 3);
+  const app = (appendixKeys || ks.slice(0, 2)).filter((k) => hasData(R, k, parts(R)));
   return {
-    blocks: [{ title: null, lines, figs: [], tables: [] }], kpi: { columns: pdfCols, rows: pdfRows },
-    xl: [{ title: `Key figures, ${R.years.at(-1)}`, columns: xlCols, rows: xlRows, cellFmts }],
+    headline, bullets, table: compTable(R, ks), charts,
+    appendix: R.an.has("tables") ? app.map((k) => yearTable(R, k).pdf) : [],
+    xl: [compTableXl(R, "Comparison", ks), ...ks.map((k) => yearTable(R, k).xl)],
   };
 }
 
-function regionsSection(R) {
-  const { D, ctx } = R;
-  const out = { lines: [], figs: [], tables: [], xl: [] };
-  for (const e of R.ents) {
-    const regs = D.region_annual.filter((r) => ctx.geoMeta(r.geo_code)?.country_code === e.code && ctx.geoMeta(r.geo_code)?.geo_level === "nuts2" && isNum(r.nights));
-    const y = Math.min(R.years.at(-1), Math.max(...regs.map((r) => r.year)));
-    const cur = regs.filter((r) => r.year === y).sort((a, b) => b.nights - a.nights);
-    if (cur.length < 2) continue;
-    const first = new Map(regs.filter((r) => r.year === R.years[0]).map((r) => [r.geo_code, r.nights]));
-    const tot = cur.reduce((a, r) => a + r.nights, 0);
-    const items = cur.slice(0, 10).map((r) => ({ name: ctx.geoName(r.geo_code), value: r.nights, share: r.share_of_country_nights ?? r.nights / tot,
-      yoy: r.nights_yoy, growth: first.get(r.geo_code) ? (r.nights / first.get(r.geo_code)) ** (1 / (y - R.years[0])) - 1 : null, foreign: r.foreign_share }));
-    const b = rankedBlock(R, { nameLabel: "Region", title: `Top regions by nights, ${R.cmp ? `${e.name}, ` : ""}${y}`, items, valueLabel: "Nights", shareLabel: "Share of national nights", chartValue: "value",
-      extra: [{ key: "yoy", label: "Change on previous year", fmt: "0.0%", pdf: (v) => fmtChange(v) },
-        ...(R.an.has("cagr") ? [{ key: "growth", label: `Compound growth since ${R.years[0]}`, fmt: "0.0%", pdf: (v) => fmtChange(v) }] : []),
-        { key: "foreign", label: "Foreign share", fmt: "0.0%", pdf: (v) => fmtPct(v, 1) }],
-      total: { name: "All regions", value: tot, share: 1 }, chart: !R.cmp });
-    if (b.fig) out.figs.push({ ...b.fig, half: false });
-    out.tables.push(b.pdf); out.xl.push(b.xl);
-    if (R.an.has("commentary")) {
-      const top3 = items.slice(0, 3).reduce((a, r) => a + r.share, 0);
-      const fast = items.filter((r) => isNum(r.growth)).sort((a, b2) => b2.growth - a.growth)[0];
-      out.lines.push(`${e.name}: ${items[0].name} is the largest region with ${fmtPct(items[0].share, 1)} of national nights in ${y}; the top three hold ${fmtPct(top3, 1)}.${fast && R.an.has("cagr") ? ` Fastest growing of the top ten since ${R.years[0]}: ${fast.name} (${fmtChange(fast.growth)} a year).` : ""}`);
+function seasonalitySection(R, label) {
+  const P = parts(R).map((e) => ({ e, ...profiles(R, e) })).filter((d) => d.out.size);
+  if (!P.length) return null;
+  const p = palette();
+  const rows = P.map((d) => {
+    const yl = Math.max(...d.out.keys()), yf = Math.min(...d.out.keys());
+    const st = seasonStats(d.out.get(yl)), st0 = seasonStats(d.out.get(yf));
+    return { d, yl, yf, st, st0 };
+  });
+  const table = {
+    groups: null, subs: null,
+    head: ["", "Year", "Busiest month", "Share", "Two busiest", `Change since ${rows[0].yf}`, "Nov-Mar share"],
+    body: rows.map((r) => [r.d.e.name, String(r.yl), monthName(r.st.peak + 1), ibPct(r.st.peakShare), ibPct(r.st.two), r.yf !== r.yl ? ibPp((r.st.two - r.st0.two) * 100) : "n/a", ibPct(r.st.off)]),
+    benchRow: rows.findIndex((r) => r.d.e.bench),
+  };
+  let headline = null; const bullets = [];
+  if (R.an.has("commentary")) {
+    const own = rows.filter((r) => !r.d.e.bench);
+    if (R.cmp && own.length >= 2) {
+      const s = [...own].sort((a, b) => a.st.two - b.st.two);
+      headline = `${s[0].d.e.name} is the least seasonal: its two busiest months take ${ibPct(s[0].st.two)} of the year v ${ibPct(s.at(-1).st.two)} for ${s.at(-1).d.e.name}`;
+    } else if (own[0]) {
+      const b = rows.find((r) => r.d.e.bench);
+      headline = `${own[0].d.e.name} peaks in ${monthName(own[0].st.peak + 1)}; the two busiest months take ${ibPct(own[0].st.two)} of the year${b ? ` v ${ibPct(b.st.two)} for ${theB(b.d.e)}` : ""}`;
+    }
+    for (const r of rows) {
+      if (r.yf !== r.yl) bullets.push(`${r.d.e.name}: peak concentration ${r.st.two < r.st0.two ? "fell" : "rose"} from ${ibPct(r.st0.two)} in ${r.yf} to ${ibPct(r.st.two)} in ${r.yl}; November to March holds ${ibPct(r.st.off)}.`);
+      else bullets.push(`${r.d.e.name}: November to March holds ${ibPct(r.st.off)} of the year (${r.yl}).`);
     }
   }
-  return out.xl.length ? combine({ title: "Largest regions", ...out }) : null;
+  const yrs = R.years.filter((y) => rows.some((r) => r.d.out.has(y)));
+  const charts = [
+    { title: `Share of annual ${label.toLowerCase()} by month (latest full year)`, legend: legendOf(R, rows.map((r) => r.d.e)),
+      draw: (el) => ibLines(el, { cats: MONTHS.map((mm) => monthName(+mm)), fmt: (v) => `${(v * 100).toFixed(0)}%`, endLabels: false,
+        series: rows.map((r) => ({ name: r.d.e.name, bench: r.d.e.bench, color: colorOf(p, r.d.e), values: r.d.out.get(r.yl) })) }) },
+    yrs.length > 1 ? { title: "Share of the two busiest months, by year", legend: legendOf(R, rows.map((r) => r.d.e)),
+      draw: (el) => ibLines(el, { cats: yrs.map(String), fmt: (v) => `${(v * 100).toFixed(0)}%`,
+        series: rows.map((r) => ({ name: r.d.e.name, bench: r.d.e.bench, color: colorOf(p, r.d.e), values: yrs.map((y) => (r.d.out.has(y) ? seasonStats(r.d.out.get(y)).two : null)) })) }) } : null,
+  ].filter(Boolean);
+  const xl = [
+    { title: "Seasonality", columns: [{ label: "Place", fmt: "text" }, { label: "Year", fmt: "text" }, { label: "Busiest month", fmt: "text" }, { label: "Busiest month share", fmt: "0.0%" }, { label: "Two busiest months share", fmt: "0.0%" }, { label: "Nov-Mar share", fmt: "0.0%" }],
+      rows: rows.map((r) => [r.d.e.name, String(r.yl), monthName(r.st.peak + 1), r.st.peakShare, r.st.two, r.st.off]) },
+    { title: "Share of annual total by month", columns: [{ label: "Month", fmt: "text" }, ...rows.map((r) => ({ label: `${r.d.e.name} (${r.yl})`, fmt: "0.0%" }))],
+      rows: MONTHS.map((mm, i) => [monthName(+mm), ...rows.map((r) => r.d.out.get(r.yl)[i])]), total: ["Total", ...rows.map(() => 1)] },
+  ];
+  return { headline, bullets, table, charts, appendix: [], xl };
+}
+
+// Mix tables (source markets, origin countries): rows = markets, columns = places' shares.
+function mixSection(R, { rowsFor, nameOf, label, unit = "nights" }) {
+  const P = parts(R).map((e) => ({ e, ...rowsFor(e) })).filter((d) => d.cur.length);
+  if (!P.length) return null;
+  const p = palette();
+  const union = [...new Set(P.flatMap((d) => d.cur.slice(0, 6).map((r) => r.code)))].slice(0, 10);
+  const share = (d, c) => d.cur.find((r) => r.code === c)?.share ?? null;
+  const share0 = (d, c) => d.first?.find((r) => r.code === c)?.share ?? null;
+  const top3 = (rows) => rows.slice(0, 3).reduce((a, r) => a + (r.share || 0), 0);
+  const showChg = R.an.has("cagr") || R.an.has("yoy");
+  const table = {
+    head: [label, ...P.flatMap((d) => [`${d.e.name} ${d.y}`, ...(showChg && d.first ? [`Δ since ${d.y0}`] : [])])],
+    body: union.map((c) => [nameOf(c), ...P.flatMap((d) => [ibPct(share(d, c)), ...(showChg && d.first ? [isNum(share(d, c)) && isNum(share0(d, c)) ? ibPp((share(d, c) - share0(d, c)) * 100) : "n/a"] : [])])]),
+    foot: ["Top-3 concentration", ...P.flatMap((d) => [ibPct(top3(d.cur)), ...(showChg && d.first ? [ibPp((top3(d.cur) - top3(d.first)) * 100)] : [])])],
+    benchCols: P.map((d) => d.e.bench),
+  };
+  let headline = null; const bullets = [];
+  if (R.an.has("commentary")) {
+    const own = P.filter((d) => !d.e.bench);
+    const conc = [...own].sort((a, b) => top3(b.cur) - top3(a.cur));
+    const leads = own.map((d) => `${d.e.name}: ${nameOf(d.cur[0].code)} ${ibPct(d.cur[0].share)}`);
+    if (own.length >= 2) {
+      const sameTop = own.every((d) => d.cur[0].code === own[0].cur[0].code);
+      headline = sameTop ? `${nameOf(own[0].cur[0].code)} is the largest ${label.toLowerCase()} for every place; ${conc[0].e.name} is the most concentrated (top three ${ibPct(top3(conc[0].cur))})`
+        : `Different anchor ${label.toLowerCase()}s (${leads.join("; ")}); ${conc[0].e.name} is the most concentrated (top three ${ibPct(top3(conc[0].cur))})`;
+    } else if (own[0]) {
+      const b = P.find((d) => d.e.bench);
+      headline = `${nameOf(own[0].cur[0].code)} accounts for ${ibPct(own[0].cur[0].share)} of ${own[0].e.name}'s ${unit}; the top three ${label.toLowerCase()}s ${ibPct(top3(own[0].cur))}${b ? ` v ${ibPct(top3(b.cur))} for ${theB(b.e)}` : ""}`;
+    }
+    for (const d of own) {
+      if (!d.first) continue;
+      const moves = d.cur.slice(0, 10).map((r) => ({ r, s0: share0(d, r.code) })).filter((x) => isNum(x.s0)).map((x) => ({ ...x, dlt: x.r.share - x.s0 })).sort((a, b) => b.dlt - a.dlt);
+      if (moves.length) bullets.push(`${d.e.name}: biggest gain in share since ${d.y0} ${nameOf(moves[0].r.code)} (${ibPp(moves[0].dlt * 100)}); biggest loss ${nameOf(moves.at(-1).r.code)} (${ibPp(moves.at(-1).dlt * 100)}).`);
+    }
+    const ukDep = own.filter((d) => (share(d, "UK") || 0) > 0.2);
+    if (ukDep.length) bullets.push(`UK exposure above 20% of ${unit} in ${listJoin(ukDep.map((d) => d.e.name))}: sensitive to sterling and UK consumer demand.`);
+  }
+  const charts = [
+    { title: `Share of ${unit} by ${label.toLowerCase()}`, legend: legendOf(R, P.map((d) => d.e)),
+      draw: (el) => ibHBars(el, { cats: union.map(nameOf), fmt: (v) => `${(v * 100).toFixed(0)}%`, series: P.map((d) => ({ name: d.e.name, color: colorOf(p, d.e), values: union.map((c) => share(d, c)) })) }) },
+  ];
+  const xl = [{ title: `Share of ${unit} by ${label.toLowerCase()}`, columns: [{ label, fmt: "text" }, ...P.map((d) => ({ label: `${d.e.name} (${d.y})`, fmt: "0.0%" }))],
+    rows: union.map((c) => [nameOf(c), ...P.map((d) => share(d, c))]), total: ["Top-3 concentration", ...P.map((d) => top3(d.cur))] }];
+  return { headline, bullets, table, charts, chartsWide: true, appendix: [], xl };
 }
 
 function sourcesSection(R) {
   const { D, ctx } = R;
   const isCountry = new Set(ctx.meta.partners.filter((p) => p.is_country).map((p) => p.partner_code));
   const pname = (c) => ctx.meta.partners.find((p) => p.partner_code === c)?.partner_name?.replace(/ \(.*\)$/, "") || c;
-  const out = { lines: [], figs: [], tables: [], xl: [] };
-  const per = R.ents.map((e) => {
-    const rows = D.source_markets.filter((r) => r.geo_code === e.code && isCountry.has(r.partner_code) && isNum(r.nights));
-    const y = Math.min(R.years.at(-1), Math.max(...rows.map((r) => r.year)));
-    const cur = rows.filter((r) => r.year === y).sort((a, b) => b.nights - a.nights);
-    const firstY = R.years.find((yy) => rows.some((r) => r.year === yy));
-    const first = new Map(rows.filter((r) => r.year === firstY).map((r) => [r.partner_code, r.nights]));
-    return { e, y, cur, firstY, first, rows };
-  }).filter((d) => d.cur.length);
-  if (!per.length) return null;
-  for (const d of per) {
-    const items = d.cur.slice(0, 10).map((r) => ({ name: pname(r.partner_code), code: r.partner_code, value: r.nights, share: r.share_of_foreign_nights, yoy: r.nights_yoy,
-      growth: d.first.get(r.partner_code) && d.y > d.firstY ? (r.nights / d.first.get(r.partner_code)) ** (1 / (d.y - d.firstY)) - 1 : null, base: r.nights_vs_baseline }));
-    const totForeign = d.cur.reduce((a, r) => a + r.nights, 0);
-    const b = rankedBlock(R, { nameLabel: "Market", title: `Top source markets, ${R.cmp ? `${d.e.name}, ` : ""}${d.y}`, items, valueLabel: "Nights", shareLabel: "Share of foreign nights",
-      extra: [{ key: "yoy", label: "Change on previous year", fmt: "0.0%", pdf: (v) => fmtChange(v) },
-        ...(R.an.has("cagr") ? [{ key: "growth", label: `Compound growth since ${d.firstY}`, fmt: "0.0%", pdf: (v) => fmtChange(v) }] : []),
-        ...(R.an.has("base") ? [{ key: "base", label: `Change vs ${R.base}`, fmt: "0.0%", pdf: (v) => fmtChange(v) }] : [])],
-      total: { name: "All foreign country markets", value: totForeign, share: 1 }, chart: !R.cmp });
-    if (b.fig) out.figs.push(b.fig);
-    out.tables.push(b.pdf); out.xl.push(b.xl);
-    if (R.an.has("commentary")) {
-      const top = items[0];
-      const fast = items.filter((r) => isNum(r.growth)).sort((a, b2) => b2.growth - a.growth)[0];
-      out.lines.push(`${d.e.name}: ${top.name} is the largest foreign market with ${fmtPct(top.share, 1)} of foreign nights in ${d.y}; the top three account for ${fmtPct(items.slice(0, 3).reduce((a, r) => a + (r.share || 0), 0), 1)}.${fast && R.an.has("cagr") ? ` Fastest growing top-ten market since ${d.firstY}: ${fast.name} (${fmtChange(fast.growth)} a year).` : ""}`);
-    }
-  }
-  if (!R.cmp) {
-    // Trend of the top five markets over the window.
-    const d = per[0]; const p = palette();
-    const five = d.cur.slice(0, 5).map((r) => r.partner_code);
-    out.figs.push({ title: "Nights by the top five source markets", half: true, legend: five.map((c, i) => ({ label: pname(c), color: p.series[i] })),
-      draw: (el) => timeChart(el, { categories: yearCats(R), yFormat: (v) => fmtNum(v, 1),
-        series: five.map((c, i) => ({ name: pname(c), color: p.series[i], data: R.years.map((y) => [String(y), d.rows.find((r) => r.year === y && r.partner_code === c)?.nights ?? null]) })) }) });
-  } else {
-    // Market mix side by side: union of each place's top markets.
-    const p = palette();
-    const union = [...new Set(per.flatMap((d) => d.cur.slice(0, 6).map((r) => r.partner_code)))].slice(0, 10);
-    const share = (d, c) => d.cur.find((r) => r.partner_code === c)?.share_of_foreign_nights ?? null;
-    out.figs.unshift({ title: "Share of foreign nights by source market", half: false, legend: per.map((d) => ({ label: `${d.e.name} (${d.y})`, color: p.series[d.e.i] })),
-      draw: (el) => timeChart(el, { categories: union.map(pname), yFormat: (v) => fmtPct(v, 0),
-        series: per.map((d) => ({ name: d.e.name, type: "bar", color: p.series[d.e.i], data: union.map((c) => [pname(c), share(d, c)]) })) }) });
-    out.xl.unshift({ title: "Share of foreign nights by source market", columns: [{ label: "Market", fmt: "text" }, ...per.map((d) => ({ label: `${d.e.name} (${d.y})`, fmt: "0.0%" }))],
-      rows: union.map((c) => [pname(c), ...per.map((d) => share(d, c))]) });
-    if (R.an.has("commentary")) {
-      const shared = union.filter((c) => per.every((d) => share(d, c) > 0.05));
-      if (shared.length) out.lines.push(`Markets with over 5% of foreign nights in every place: ${shared.map(pname).join(", ")}.`);
-    }
-  }
-  return combine({ title: "Foreign guests by country of residence", ...out });
+  // The EU-27 aggregate counts only non-EU residents as foreign, so its shares are not comparable.
+  const own = new Set(R.ents.map((e) => e.code));
+  return mixSection(R, { label: "Source market", unit: "foreign nights", nameOf: pname, rowsFor: (e) => {
+    if (e.code === "EU27_2020") return { cur: [] };
+    const rows = D.source_markets.filter((r) => r.geo_code === e.code && isCountry.has(r.partner_code) && !own.has(r.partner_code) && isNum(r.nights));
+    if (!rows.length) return { cur: [] };
+    const y = Math.min(endYear(R), Math.max(...rows.map((r) => r.year)));
+    const y0 = R.years.find((yy) => yy < y && rows.some((r) => r.year === yy));
+    const pick = (yy) => rows.filter((r) => r.year === yy).sort((a, b) => b.nights - a.nights).map((r) => ({ code: r.partner_code, share: r.share_of_foreign_nights, v: r.nights }));
+    return { y, y0, cur: pick(y), first: y0 ? pick(y0) : null };
+  } });
 }
-
-function airportsInCountry(R) {
-  const { D } = R;
-  const out = { lines: [], figs: [], tables: [], xl: [] };
-  for (const e of R.ents) {
-    const aps = D.airport_summary.filter((a) => a.country_code === e.code);
-    if (!aps.length) continue;
-    const codes = new Set(aps.map((a) => a.airport_code));
-    const rows = D.airport_annual.filter((r) => codes.has(r.airport_code) && !r.is_ytd && r.year <= R.years.at(-1));
-    if (!rows.length) continue;
-    const y = Math.max(...rows.map((r) => r.year));
-    const cur = rows.filter((r) => r.year === y).sort((a, b) => b.passengers - a.passengers);
-    const nat = series(R, "air_passengers", e).find((r) => r.year === y && !r.ytd)?.value;
-    const tot = nat || cur.reduce((a, r) => a + r.passengers, 0);
-    const first = new Map(rows.filter((r) => r.year === R.years[0]).map((r) => [r.airport_code, r.passengers]));
-    const items = cur.slice(0, 10).map((r) => ({ name: airportLabel(aps.find((a) => a.airport_code === r.airport_code)), value: r.passengers, share: r.passengers / tot, yoy: r.passengers_yoy,
-      growth: first.get(r.airport_code) ? (r.passengers / first.get(r.airport_code)) ** (1 / (y - R.years[0])) - 1 : null }));
-    const b = rankedBlock(R, { nameLabel: "Airport", title: `Top airports by passengers, ${R.cmp ? `${e.name}, ` : ""}${y}`, items, valueLabel: "Passengers", shareLabel: "Share of national passengers", chartValue: "value",
-      extra: [{ key: "yoy", label: "Change on previous year", fmt: "0.0%", pdf: (v) => fmtChange(v) },
-        ...(R.an.has("cagr") ? [{ key: "growth", label: `Compound growth since ${R.years[0]}`, fmt: "0.0%", pdf: (v) => fmtChange(v) }] : [])],
-      total: { name: "National total", value: tot, share: 1 }, chart: !R.cmp });
-    if (b.fig) out.figs.push(b.fig);
-    out.tables.push(b.pdf); out.xl.push(b.xl);
-    if (R.an.has("commentary")) out.lines.push(`${e.name}: ${items[0].name} handled ${fmtPrecise(items[0].value)} passengers in ${y}, ${fmtPct(items[0].share, 1)} of the national total.`);
-  }
-  return out.xl.length ? { title: "Airports", ...out } : null;
-}
-
 function originsSection(R) {
   const { D } = R;
-  const out = { lines: [], figs: [], tables: [], xl: [] };
-  for (const e of R.ents) {
-    const rows = D.airport_origins.filter((r) => r.airport_code === e.code && r.year <= R.years.at(-1));
-    if (!rows.length) continue;
+  const names = new Map(D.airport_origins.map((r) => [r.partner_country_code, r.partner_country_name]));
+  return mixSection(R, { label: "Origin country", unit: "route passengers", nameOf: (c) => names.get(c) || c, rowsFor: (e) => {
+    if (e.bench) return { cur: [] };
+    const rows = D.airport_origins.filter((r) => r.airport_code === e.code && r.year <= endYear(R));
+    if (!rows.length) return { cur: [] };
     const y = Math.max(...rows.map((r) => r.year));
-    const cur = rows.filter((r) => r.year === y).sort((a, b) => b.passengers - a.passengers);
-    const items = cur.slice(0, 12).map((r) => ({ name: r.partner_country_name, value: r.passengers, share: r.share_of_airport, yoy: r.passengers_yoy }));
-    const b = rankedBlock(R, { nameLabel: "Country", title: `Origin countries, ${R.cmp ? `${e.name}, ` : ""}${y}`, items, valueLabel: "Passengers", shareLabel: "Share of route passengers",
-      extra: [{ key: "yoy", label: "Change on previous year", fmt: "0.0%", pdf: (v) => fmtChange(v) }],
-      total: { name: "All origin countries", value: cur.reduce((a, r) => a + r.passengers, 0), share: 1 } });
-    if (b.fig) out.figs.push(b.fig);
-    out.tables.push(b.pdf); out.xl.push(b.xl);
-    if (R.an.has("commentary")) out.lines.push(`${e.name}: ${items[0].name} is the largest origin with ${fmtPct(items[0].share, 1)} of route passengers in ${y}${items[1] ? `, then ${items[1].name} (${fmtPct(items[1].share, 1)})` : ""}. Eurostat publishes route data with a lag, so ${y} is the latest year available.`);
+    const y0 = R.years.find((yy) => yy < y && rows.some((r) => r.year === yy));
+    const pick = (yy) => rows.filter((r) => r.year === yy).sort((a, b) => b.passengers - a.passengers).map((r) => ({ code: r.partner_country_code, share: r.share_of_airport, v: r.passengers }));
+    return { y, y0, cur: pick(y), first: y0 ? pick(y0) : null };
+  } });
+}
+
+function regionsSection(R) {
+  const { D, ctx } = R;
+  const p = palette();
+  const per = R.ents.map((e) => {
+    const regs = D.region_annual.filter((r) => ctx.geoMeta(r.geo_code)?.country_code === e.code && ctx.geoMeta(r.geo_code)?.geo_level === "nuts2" && isNum(r.nights));
+    if (!regs.length) return null;
+    const y = Math.min(endYear(R), Math.max(...regs.map((r) => r.year)));
+    const y0 = R.years.find((yy) => yy < y && regs.some((r) => r.year === yy));
+    const first = new Map(regs.filter((r) => r.year === y0).map((r) => [r.geo_code, r.nights]));
+    const cur = regs.filter((r) => r.year === y).sort((a, b) => b.nights - a.nights);
+    const tot = cur.reduce((a, r) => a + r.nights, 0);
+    const tot0 = [...first.values()].reduce((a, v) => a + v, 0);
+    const items = cur.map((r) => ({ name: ctx.geoName(r.geo_code), v: r.nights, share: r.nights / tot,
+      g: first.get(r.geo_code) && y > y0 ? (r.nights / first.get(r.geo_code)) ** (1 / (y - y0)) - 1 : null, foreign: r.foreign_share }));
+    return { e, y, y0, items, n: cur.length, natG: tot0 && y > y0 ? (tot / tot0) ** (1 / (y - y0)) - 1 : null };
+  }).filter(Boolean);
+  if (!per.length) return null;
+  const top3 = (d) => d.items.slice(0, 3).reduce((a, r) => a + r.share, 0);
+  let table, charts;
+  if (R.cmp) {
+    table = { head: ["", "Regions", "Largest region", "Share", "Top-3 share", "Fastest-growing (top 10)", "CAGR", "National CAGR"],
+      body: per.map((d) => { const f = d.items.slice(0, 10).filter((x) => isNum(x.g)).sort((a, b) => b.g - a.g)[0];
+        return [d.e.name, String(d.n), d.items[0].name, ibPct(d.items[0].share), ibPct(top3(d)), f?.name ?? "n/a", ibPct(f?.g), ibPct(d.natG)]; }) };
+    const all = per.flatMap((d) => d.items.slice(0, 6).map((x) => ({ ...x, e: d.e }))).sort((a, b) => b.v - a.v).slice(0, 12);
+    charts = [{ title: "Largest regions by nights", legend: legendOf(R, per.map((d) => d.e)),
+      draw: (el) => ibHBars(el, { cats: all.map((x) => x.name), fmt: (v) => ibVal(M.nights, v), series: per.map((d) => ({ name: d.e.name, color: colorOf(p, d.e), values: all.map((x) => (x.e === d.e ? x.v : null)) })) }) }];
+  } else {
+    const d = per[0];
+    table = { head: ["Region", `Nights ${d.y}`, "Share", `CAGR ${d.y0}-${d.y}`, "Foreign share"],
+      body: d.items.slice(0, 10).map((x) => [x.name, ibVal(M.nights, x.v), ibPct(x.share), ibPct(x.g), ibPct(x.foreign)]),
+      foot: [`${d.e.name} (all regions)`, ibVal(M.nights, d.items.reduce((a, r) => a + r.v, 0)), "100.0%", ibPct(d.natG), ""] };
+    const top = d.items.slice(0, 8);
+    charts = [
+      { title: `Nights by region, ${d.y}`, draw: (el) => ibHBars(el, { cats: top.map((x) => x.name), fmt: (v) => ibVal(M.nights, v), series: [{ name: d.e.name, color: p.series[0], values: top.map((x) => x.v) }] }) },
+      { title: `Growth by region v national (${d.y0}-${d.y} CAGR)`, legend: [{ label: "Region", color: p.series[0] }, { label: `${d.e.name}`, color: p.context }],
+        draw: (el) => ibHBars(el, { cats: [...top.map((x) => x.name), `${d.e.name} total`], fmt: (v) => ibPct(v), series: [{ name: "CAGR", color: p.series[0], values: [...top.map((x) => x.g), null] }, { name: "National", color: p.context, values: [...top.map(() => null), d.natG] }] }) },
+    ];
   }
-  return out.xl.length ? combine({ title: "Origin countries", ...out }) : null;
+  let headline = null; const bullets = [];
+  if (R.an.has("commentary")) {
+    const c = [...per].sort((a, b) => top3(b) - top3(a));
+    headline = R.cmp ? `${c[0].e.name} is the more regionally concentrated market: its top three regions hold ${ibPct(top3(c[0]))} of nights v ${ibPct(top3(c.at(-1)))} for ${c.at(-1).e.name}`
+      : `${per[0].items[0].name} is ${per[0].e.name}'s largest region with ${ibPct(per[0].items[0].share)} of nights; the top three hold ${ibPct(top3(per[0]))}`;
+    for (const d of per) {
+      const out = d.items.slice(0, 10).filter((x) => isNum(x.g) && isNum(d.natG) && x.g > d.natG).map((x) => x.name);
+      if (out.length) bullets.push(`${d.e.name}: ${out.length} of the top ten regions grew faster than the national ${ibPct(d.natG)} a year, led by ${out.slice(0, 3).join(", ")}.`);
+    }
+  }
+  const xl = per.map((d) => ({ title: `Regions, ${d.e.name}, ${d.y}`, columns: [{ label: "Region", fmt: "text" }, { label: "Nights", fmt: "#,##0" }, { label: "Share of national nights", fmt: "0.0%" },
+    { label: `Compound growth since ${d.y0}`, fmt: "0.0%" }, { label: "Foreign share", fmt: "0.0%" }], rows: d.items.map((x) => [x.name, x.v, x.share, x.g, x.foreign]),
+  total: ["All regions", d.items.reduce((a, r) => a + r.v, 0), 1, d.natG, null] }));
+  return { headline, bullets, table, charts, chartsWide: R.cmp, appendix: [], xl };
 }
 
 function routesSection(R) {
   const { D } = R;
-  const out = { lines: [], figs: [], tables: [], xl: [] };
-  for (const e of R.ents) {
-    const rows = D.airport_routes.filter((r) => r.airport_code === e.code && r.year <= R.years.at(-1));
-    if (!rows.length) continue;
+  const p = palette();
+  const per = R.ents.map((e) => {
+    const rows = D.airport_routes.filter((r) => r.airport_code === e.code && r.year <= endYear(R));
+    if (!rows.length) return null;
     const y = Math.max(...rows.map((r) => r.year));
-    const cur = rows.filter((r) => r.year === y).sort((a, b) => b.passengers - a.passengers).slice(0, 15);
-    const tot = cur.reduce((a, r) => a + r.passengers, 0);
-    const items = cur.map((r) => ({ name: r.partner_airport_name, value: r.passengers, share: r.passengers / tot, country: r.partner_country_name, yoy: r.passengers_yoy }));
-    const b = rankedBlock(R, { nameLabel: "Route", title: `Top routes, ${R.cmp ? `${e.name}, ` : ""}${y}`, items, valueLabel: "Passengers", shareLabel: "Share of top 15", chartValue: "value",
-      extra: [{ key: "country", label: "Country", fmt: "text", pdf: (v) => v ?? "" }, { key: "yoy", label: "Change on previous year", fmt: "0.0%", pdf: (v) => fmtChange(v) }],
-      total: { name: "Top 15 routes", value: tot, share: 1 }, chart: !R.cmp });
-    if (b.fig) out.figs.push({ ...b.fig, half: false });
-    out.tables.push(b.pdf); out.xl.push(b.xl);
-    if (R.an.has("commentary")) out.lines.push(`${e.name}: the busiest route in ${y} was ${items[0].name} (${items[0].country}) with ${fmtPrecise(items[0].value)} passengers.`);
+    return { e, y, top: rows.filter((r) => r.year === y).sort((a, b) => b.passengers - a.passengers).slice(0, 10) };
+  }).filter(Boolean);
+  if (!per.length) return null;
+  const table = { head: ["#", ...per.flatMap((d) => [`${d.e.name} ${d.y}`, "Pax", "YoY"])],
+    body: Array.from({ length: 10 }, (_, i) => [String(i + 1), ...per.flatMap((d) => { const r = d.top[i]; return r ? [r.partner_airport_name, ibVal(M.passengers, r.passengers), ibPct(r.passengers_yoy)] : ["", "", ""]; })]) };
+  const all = per.flatMap((d) => d.top.slice(0, 6).map((r) => ({ name: `${r.partner_airport_name}`, v: r.passengers, e: d.e }))).sort((a, b) => b.v - a.v).slice(0, 12);
+  const charts = [{ title: "Busiest routes by passengers", legend: legendOf(R, per.map((d) => d.e)),
+    draw: (el) => ibHBars(el, { cats: all.map((x) => (R.cmp ? `${x.name} (${x.e.name.split(" ")[0]})` : x.name)), fmt: (v) => ibVal(M.passengers, v), series: per.map((d) => ({ name: d.e.name, color: colorOf(p, d.e), values: all.map((x) => (x.e === d.e ? x.v : null)) })) }) }];
+  let headline = null; const bullets = [];
+  if (R.an.has("commentary")) {
+    headline = per.map((d) => `${d.e.name}'s busiest route is ${d.top[0].partner_airport_name} (${ibVal(M.passengers, d.top[0].passengers)})`).join("; ");
+    for (const d of per) {
+      const t = d.top.reduce((a, r) => a + r.passengers, 0);
+      const fast = d.top.filter((r) => isNum(r.passengers_yoy)).sort((a, b) => b.passengers_yoy - a.passengers_yoy)[0];
+      bullets.push(`${d.e.name}: top ten routes carry ${ibVal(M.passengers, t)} passengers; fastest growing ${fast ? `${fast.partner_airport_name} (${ibPct(fast.passengers_yoy)})` : "n/a"}.`);
+    }
   }
-  return out.xl.length ? combine({ title: "Top routes", ...out }) : null;
+  const xl = per.map((d) => ({ title: `Top routes, ${d.e.name}, ${d.y}`, columns: [{ label: "Route", fmt: "text" }, { label: "Country", fmt: "text" }, { label: "Passengers", fmt: "#,##0" }, { label: "Change on previous year", fmt: "0.0%" }],
+    rows: d.top.map((r) => [r.partner_airport_name, r.partner_country_name, r.passengers, r.passengers_yoy]), total: ["Top ten", null, d.top.reduce((a, r) => a + r.passengers, 0), null] }));
+  return { headline, bullets, table, charts, chartsWide: true, appendix: [], xl };
 }
 
-const SECTION_BUILDERS = {
+const SECTION_DEFS = {
   country: {
-    summary: summarySection,
-    demand: (R) => combine(...metrics(R, ["nights", "arrivals", "nights_foreign", "nights_domestic"]),
-      R.an.has("share") ? metricBlock(R, "share_eu") : null, metricBlock(R, "foreign_share"),
-      R.an.has("intensity") ? metricBlock(R, "nights_per_resident") : null, R.an.has("monthly") ? monthlyBlock(R, "Nights") : null),
-    occupancy: (R) => combine(...metrics(R, ["bed_place_occupancy_rate", "room_occupancy_rate", "avg_length_of_stay"])),
-    seasonality: (R) => combine(seasonalityBlock(R, "Nights"), metricBlock(R, "peak_two_month_share")),
+    demand: (R) => metricSection(R, ["nights", "arrivals", "nights_foreign", "foreign_share", ...(R.an.has("share") ? ["share_eu"] : []), ...(R.an.has("intensity") ? ["nights_per_resident"] : [])],
+      { extraCharts: R.an.has("monthly") ? [monthlyChart(R, "Nights")] : [] }),
+    occupancy: (R) => metricSection(R, ["bed_place_occupancy_rate", "room_occupancy_rate", "avg_length_of_stay"]),
+    seasonality: (R) => seasonalitySection(R, "Nights"),
     regions: regionsSection,
     sources: sourcesSection,
-    rentals: (R) => combine(...metrics(R, ["platform_nights", "platform_share"])),
-    air: (R) => combine(...metrics(R, ["air_passengers", "air_passengers_international"]), airportsInCountry(R)),
-    prices: (R) => combine(...metrics(R, ["hicp_accommodation_pct", "hicp_restaurants_pct", "hicp_all_items_pct", "accommodation_turnover_index"])),
-    macro: (R) => combine(...metrics(R, ["gdp_growth", "unemployment_rate_pct", "consumer_confidence_balance", "bond_yield_10y_pct"])),
-    weather: (R) => combine(...metrics(R, ["w_temp", "w_anom", "w_sun", "w_rain"])),
-    hotels: (R) => combine(...metrics(R, ["adr_es", "revpar_es", "rev_night_pt"])),
-    fx: (R) => {
-      const euro = R.ents.filter((e) => !e.meta?.currency_code || e.meta.currency_code === "EUR");
-      const note = euro.length ? { title: null, lines: [`${euro.map((e) => e.name).join(", ")} ${euro.length > 1 ? "use" : "uses"} the euro.`] } : null;
-      return combine(note, metricBlock(R, "fx"));
-    },
+    rentals: (R) => metricSection(R, ["platform_nights", "platform_share"]),
+    air: (R) => metricSection(R, ["air_passengers", "air_passengers_international"]),
+    prices: (R) => metricSection(R, ["hicp_accommodation_pct", "hicp_restaurants_pct", "hicp_all_items_pct", "accommodation_turnover_index"]),
+    macro: (R) => metricSection(R, ["gdp_growth", "unemployment_rate_pct", "consumer_confidence_balance", "bond_yield_10y_pct"]),
+    weather: (R) => metricSection(R, ["w_anom", "w_temp", "w_sun", "w_rain"]),
+    hotels: (R) => (R.ents.some((e) => ["ES", "PT"].includes(e.code)) ? metricSection(R, ["adr_es", "revpar_es", "rev_night_pt"]) : null),
+    fx: (R) => (R.ents.some((e) => e.meta?.currency_code && e.meta.currency_code !== "EUR") ? metricSection(R, ["fx"]) : null),
   },
   region: {
-    summary: summarySection,
-    demand: (R) => combine(...metrics(R, ["nights", "nights_foreign", "foreign_share"]), R.an.has("monthly") ? monthlyBlock(R, "Nights") : null),
-    share: (R) => combine(metricBlock(R, "share_of_country_nights")),
-    seasonality: (R) => combine(seasonalityBlock(R, "Nights"), metricBlock(R, "peak_two_month_share")),
-    rentals: (R) => combine(...metrics(R, ["platform_nights", "platform_share"])),
-    weather: (R) => combine(...metrics(R, ["w_temp", "w_anom", "w_sun", "w_rain"])),
+    demand: (R) => metricSection(R, ["nights", "nights_foreign", "foreign_share"], { extraCharts: R.an.has("monthly") ? [monthlyChart(R, "Nights")] : [] }),
+    share: (R) => metricSection(R, ["share_of_country_nights"]),
+    seasonality: (R) => seasonalitySection(R, "Nights"),
+    rentals: (R) => metricSection(R, ["platform_nights", "platform_share"]),
+    weather: (R) => metricSection(R, ["w_anom", "w_temp", "w_sun", "w_rain"]),
   },
   airport: {
-    summary: summarySection,
-    traffic: (R) => combine(metricBlock(R, "passengers", { primary: true }), R.an.has("share") ? metricBlock(R, "share_country_air") : null,
-      R.an.has("monthly") ? monthlyBlock(R, "Passengers") : null),
-    seasonality: (R) => combine(seasonalityBlock(R, "Passengers")),
+    traffic: (R) => metricSection(R, ["passengers", ...(R.an.has("share") ? ["share_country_air"] : [])], { extraCharts: R.an.has("monthly") ? [monthlyChart(R, "Passengers")] : [] }),
+    seasonality: (R) => seasonalitySection(R, "Passengers"),
     origins: originsSection,
     routes: routesSection,
   },
 };
 
-// ------------------------------------------------------------------ document
+// ------------------------------------------------------------------ executive summary
+// Scorecard: each criterion ranks the places (comparison) or sets the place against its benchmark.
+const SCORE = {
+  country: [["Scale", "nights", "value"], ["Growth (CAGR)", "nights", "cagr"], ["Recovery v 2019", "nights", "base"], ["Momentum (latest YoY)", "nights", "yoy"],
+    ["Occupancy", "bed_place_occupancy_rate", "value"], ["Year-round demand", "season", "two"], ["International mix", "foreign_share", "value"],
+    ["Air traffic growth", "air_passengers", "cagr"], ["Pricing momentum", "hicp_accommodation_pct", "value"]],
+  region: [["Scale", "nights", "value"], ["Growth (CAGR)", "nights", "cagr"], ["Recovery v 2019", "nights", "base"], ["Momentum (latest YoY)", "nights", "yoy"],
+    ["Year-round demand", "season", "two"], ["International mix", "foreign_share", "value"], ["Share of national nights", "share_of_country_nights", "value"]],
+  airport: [["Scale", "passengers", "value"], ["Growth (CAGR)", "passengers", "cagr"], ["Recovery v 2019", "passengers", "base"], ["Momentum (latest YoY)", "passengers", "yoy"],
+    ["Year-round demand", "season", "two"], ["Share of national passengers", "share_country_air", "value"]],
+};
+function scoreValue(R, e, key, what) {
+  if (key === "season") {
+    const pr = profiles(R, e).out;
+    if (!pr.size) return null;
+    const v = seasonStats(pr.get(Math.max(...pr.keys()))).two;
+    return { v, t: ibPct(v), better: "low" };
+  }
+  const m = M[key];
+  const f = facts(R, key, e);
+  const v = what === "value" ? f.last?.value : what === "yoy" ? f.last?.change : what === "cagr" ? f.g?.v : f.vb;
+  if (!isNum(v)) return null;
+  const t = what === "value" ? ibVal(m, v) : what === "cagr" ? ibGrowth(m, f.g) : ibChg(m, v);
+  return { v, t, better: "high" };
+}
+function summarySlide(R, sections) {
+  const P = parts(R);
+  const crit = SCORE[R.st.level].map(([label, key, what]) => ({ label, key, what, vals: P.map((e) => scoreValue(R, e, key, what)) }))
+    .filter((c) => c.vals.filter(Boolean).length >= (R.cmp ? 2 : 1));
+  const own = R.ents;
+  const ranks = own.map(() => []);
+  for (const c of crit) {
+    const xs = own.map((e, i) => ({ i, s: c.vals[i] })).filter((x) => x.s);
+    xs.sort((a, b) => (a.s.better === "high" ? b.s.v - a.s.v : a.s.v - b.s.v));
+    c.rank = new Map(xs.map((x, r) => [x.i, r + 1]));
+    xs.forEach((x, r) => ranks[x.i].push(r + 1));
+    if (!R.cmp && R.bench) {
+      const me = c.vals[0], b = c.vals[1];
+      c.vsBench = me && b ? ((me.better === "high" ? me.v >= b.v : me.v <= b.v) ? "above" : "below") : null;
+    }
+  }
+  const avg = ranks.map((r) => (r.length ? r.reduce((a, x) => a + x, 0) / r.length : null));
+  const table = R.cmp
+    ? { head: ["Criterion", ...own.map((e) => e.name)], score: true,
+      body: crit.map((c) => [c.label, ...own.map((e, i) => ({ t: c.vals[i]?.t ?? "n/a", rank: c.rank.get(i), n: c.rank.size }))]),
+      foot: ["Average rank (overall)", ...own.map((e, i) => (isNum(avg[i]) ? `${avg[i].toFixed(1)} (${ordinal([...avg].filter(isNum).sort((a, b) => a - b).indexOf(avg[i]) + 1)})` : "n/a"))] }
+    : { head: ["Criterion", R.ents[0].name, ...(R.bench ? [R.bench.name, "Position"] : [])], score: true,
+      body: crit.map((c) => [c.label, { t: c.vals[0]?.t ?? "n/a" }, ...(R.bench ? [{ t: c.vals[1]?.t ?? "n/a", bench: true }, { t: c.vsBench === "above" ? "▲ Ahead" : c.vsBench === "below" ? "▼ Behind" : "n/a", pos: c.vsBench }] : [])]),
+      foot: R.bench ? ["Criteria ahead of benchmark", `${crit.filter((c) => c.vsBench === "above").length} of ${crit.filter((c) => c.vsBench).length}`, "", ""] : null };
+  // Conclusions: the overall verdict, then each section's headline.
+  const items = [];
+  if (R.an.has("commentary")) {
+    if (R.cmp) {
+      const order = own.map((e, i) => ({ e, i, a: avg[i] })).filter((x) => isNum(x.a)).sort((a, b) => a.a - b.a);
+      if (order.length) {
+        const best = order[0];
+        const wins = (i) => crit.filter((c) => c.rank.get(i) === 1).map((c) => lc(c.label.replace(/ \(.*\)$/, "")));
+        const others = order.slice(1).map((x) => (wins(x.i).length ? `${x.e.name} leads on ${listJoin(wins(x.i))}` : null)).filter(Boolean);
+        items.push({ lead: `${best.e.name} screens strongest overall (average rank ${best.a.toFixed(1)} across ${crit.length} criteria)`,
+          text: `It leads on ${listJoin(wins(best.i)) || "no single criterion but ranks consistently"}${others.length ? `; ${others.join("; ")}` : ""}.` });
+      }
+    } else if (R.bench) {
+      const ahead = crit.filter((c) => c.vsBench === "above").map((c) => lc(c.label.replace(/ \(.*\)$/, "")));
+      const behind = crit.filter((c) => c.vsBench === "below").map((c) => lc(c.label.replace(/ \(.*\)$/, "")));
+      items.push({ lead: `${R.ents[0].name} is ahead of ${theB(R.bench)} on ${ahead.length} of ${ahead.length + behind.length} criteria`,
+        text: `Ahead on ${listJoin(ahead) || "none"}; behind on ${listJoin(behind) || "none"}.` });
+    }
+    for (const s of sections) if (s.headline) items.push({ lead: `${s.title.replace(/:.*$/, "")}: ${s.headline}`, text: s.bullets?.[0] || "" });
+  }
+  const xl = [{ title: "Scorecard", columns: [{ label: "Criterion", fmt: "text" }, ...P.map((e) => ({ label: e.name, fmt: "General" }))],
+    rows: crit.map((c) => [c.label, ...P.map((e, i) => c.vals[i]?.v ?? null)]),
+    cellFmts: crit.map((c) => ["text", ...P.map(() => (c.key === "season" ? "0.0%" : c.what === "value" ? xlFmt(M[c.key]) : c.what === "cagr" ? (isRatio(M[c.key]) ? "0.0%" : xlChgFmt(M[c.key])) : xlChgFmt(M[c.key])))]),
+  }];
+  // Excel values for change criteria need the same scaling as elsewhere.
+  xl[0].rows = crit.map((c) => [c.label, ...P.map((e, i) => { const v = c.vals[i]?.v; if (!isNum(v)) return null; return c.key === "season" || c.what === "value" || (c.what === "cagr" && isRatio(M[c.key])) ? v : xlChg(M[c.key], v); })]);
+  const headline = items[0]?.lead || null;
+  return { headline, items: items.slice(0, 7), table, scorecard: true, charts: [], bullets: [], appendix: [], xl };
+}
+
+// ------------------------------------------------------------------ document (4:3 slide deck)
+// Follows the house market-overview deck: #DCDAC8 title band, #F6F3EB page, bold upper-case
+// Arial Nova titles, Century Gothic text, navy-headed tables, red / navy / grey series, and the
+// emblem, "Strictly Private & Confidential" and page number along the foot. 10 x 7.5 in slides.
+const BRAND = { logo: "assets/brand/logo.png", emblem: "assets/brand/emblem.png" };
+const SECTION_SOURCES = {
+  summary: "Eurostat, ECB, OECD", demand: "Eurostat", occupancy: "Eurostat", seasonality: "Eurostat", regions: "Eurostat (NUTS 2)",
+  sources: "Eurostat", rentals: "Eurostat (experimental statistics)", air: "Eurostat", prices: "Eurostat (HICP, short-term business statistics)",
+  macro: "Eurostat, ECB", weather: "Open-Meteo (ERA5)", hotels: "INE, Statistics Portugal", fx: "ECB", share: "Eurostat",
+  traffic: "Eurostat", origins: "Eurostat (route data)", routes: "Eurostat (route data)",
+};
+const brandImg = (src, cls) => h("img", { src, class: cls, alt: "", onerror: (e) => e.target.remove() });
+
+function slideShell(title, { cover = false } = {}) {
+  const body = h("div", { class: "sl-body" });
+  const pg = h("span", { class: "sl-pg" });
+  const src = h("div", { class: "sl-src" });
+  const el = h("section", { class: `sl${cover ? " sl-cover" : ""}` },
+    cover ? null : h("header", { class: "sl-band" }, h("h2", {}, title.toUpperCase())),
+    body, cover ? null : src,
+    h("footer", { class: "sl-foot" }, brandImg(BRAND.emblem, "sl-emblem"), h("span", { class: "sl-conf" }, "Strictly Private", h("br"), "& Confidential"), pg));
+  return { el, body, pg, src };
+}
+
+function renderCompTable(t) {
+  const head1 = h("tr", {}, h("th", { class: "text" }, ""), ...t.groups.map((g) => h("th", { colspan: String(g.span), class: `grp${g.bench ? " bench" : ""}` }, g.label)));
+  const head2 = h("tr", { class: "sub" }, h("th", { class: "text" }, "Metric"), ...t.groups.flatMap((g) => t.subs.map((s, j) => h("th", { class: `${j === 0 ? "gstart" : ""}${g.bench ? " bench" : ""}` }, s))));
+  const body = t.rows.map((r) => h("tr", {}, h("td", { class: "text" }, r.label),
+    ...r.cells.flatMap((cs, gi) => cs.map((c, j) => h("td", { class: `${j === 0 ? "gstart" : ""}${t.groups[gi].bench ? " bench" : ""}${c.bold ? " lead" : ""}${/^\(/.test(c.t) ? " negv" : ""}` }, c.t)))));
+  return h("table", { class: "sl-table comp" }, h("thead", {}, head1, head2), h("tbody", {}, body));
+}
+function renderSimpleTable(t, { highlight } = {}) {
+  const cell = (c, i, tag) => {
+    if (c && typeof c === "object") {
+      const shade = c.rank && c.n > 1 ? (c.rank === 1 ? " best" : c.rank === c.n ? " worst" : " mid") : "";
+      return h(tag, { class: `${i === 0 ? "text" : ""}${shade}${c.bench ? " bench" : ""}${c.pos ? ` pos-${c.pos}` : ""}${/^\(/.test(c.t) ? " negv" : ""}` }, c.t);
+    }
+    return h(tag, { class: `${i === 0 ? "text" : ""}${/^\(/.test(String(c)) ? " negv" : ""}` }, c ?? "");
+  };
+  return h("table", { class: `sl-table${t.score ? " score" : ""}` },
+    h("thead", {}, h("tr", {}, t.head.map((c, i) => h("th", { class: `${i === 0 ? "text" : ""}${t.benchCols?.[i - 1] ? " bench" : ""}` }, c)))),
+    h("tbody", {}, t.body.map((r, ri) => h("tr", { class: `${highlight && highlight(r) ? "hl" : ""}${t.benchRow === ri ? " benchrow" : ""}` }, r.map((c, i) => cell(c, i, "td"))))),
+    t.foot ? h("tfoot", {}, h("tr", {}, t.foot.map((c, i) => cell(c, i, "td")))) : null);
+}
+function deckTable(columns, rows, { highlight } = {}) { return renderSimpleTable({ head: columns, body: rows }, { highlight }); }
+
+// Prose keeps one level of brackets: "(x (0.6pp))" reads as "(x −0.6pp)".
+const tidy = (t) => (t ? String(t).replace(/\(\(([^()]+)\)\)/g, "(−$1)").replace(/ \(([^()]*)\(([^()]+)\)([^()]*)\)/g, " ($1−$2$3)") : t);
+
 function renderDocument(ctx, host, doc, paper, scroll) {
   const { R } = doc;
+  for (const s of doc.sections) {
+    s.headline = tidy(s.headline);
+    if (s.bullets) s.bullets = s.bullets.map(tidy);
+    if (s.items) s.items = s.items.map((it) => ({ lead: tidy(it.lead), text: tidy(it.text) }));
+  }
   const generated = new Date().toISOString().slice(0, 10);
   const draws = [];
-  const contents = doc.sections.map((s, i) => h("li", {}, h("span", { class: "rp-num" }, String(i + 1).padStart(2, "0")), s.title));
-  paper.append(h("header", { class: "rp-cover" },
-    h("div", { class: "rp-kicker" }, "EU Markets · " + doc.subtitle),
-    h("h1", {}, doc.title),
-    h("p", { class: "rp-period" }, doc.period),
-    R.cmp ? h("div", { class: "rp-ents" }, legendHTML(doc.ents.map((e) => ({ label: e.name, color: palette().series[e.i] })))) : null,
-    h("dl", { class: "rp-facts" },
-      h("dt", {}, "Generated"), h("dd", {}, generated),
-      h("dt", {}, "Data refreshed"), h("dd", {}, ctx.meta.generated_at.slice(0, 10)),
+  const slides = [];
+  const add = (s, section) => { slides.push({ ...s, section }); paper.append(s.el); return s; };
+  const lastYear = String(endYear(R));
+  const isFinal = (r) => typeof r[0] === "string" && r[0].startsWith(lastYear);
+  const figure = (f) => {
+    const el = h("div", { class: "sl-chart" });
+    draws.push(() => f.draw(el));
+    return h("figure", { class: "sl-fig" }, h("figcaption", {}, f.title), f.legend ? legendHTML(f.legend) : null, el, f.note ? h("p", { class: "sl-note" }, f.note) : null);
+  };
+
+  const cover = slideShell("", { cover: true });
+  cover.body.append(h("div", { class: "cv-oval" }, brandImg(BRAND.logo, "cv-logo"),
+    h("div", { class: "cv-title" }, `${doc.title}: ${doc.subtitle}`.toUpperCase()),
+    h("div", { class: "cv-sub" }, R.bench ? `${doc.period} · benchmarked against ${theB(R.bench)}` : doc.period)));
+  add(cover, null);
+
+  const toc = slideShell("Table of contents");
+  const tocList = h("div", { class: "toc-list" });
+  toc.body.classList.add("toc");
+  toc.body.append(h("div", { class: "toc-card" },
+    h("dl", {},
+      h("dt", {}, R.cmp ? "Places" : "Place"), h("dd", {}, R.ents.map((e) => e.name).join(", ")),
+      ...(R.bench ? [h("dt", {}, "Benchmark"), h("dd", {}, R.bench.name)] : []),
+      h("dt", {}, "Period"), h("dd", {}, doc.period),
       h("dt", {}, "Baseline year"), h("dd", {}, String(R.base)),
-      h("dt", {}, "Analytics"), h("dd", {}, ANALYTICS.filter(([k]) => R.an.has(k)).map(([, l]) => l).join(", ") || "none")),
-    h("h2", { class: "rp-contents-h" }, "Contents"), h("ol", { class: "rp-contents" }, contents),
-    h("p", { class: "rp-sources" }, "Sources: Eurostat, ECB Data Portal, OECD, Open-Meteo, INE, Statistics Portugal. Figures for the latest year may be year to date and are marked YTD; year-to-date changes compare the same months a year earlier.")));
-  doc.sections.forEach((s, i) => {
-    const sec = h("section", { class: "rp-section" }, h("h2", {}, h("span", { class: "rp-num" }, String(i + 1).padStart(2, "0")), s.title));
-    const blocks = s.blocks || [];
-    blocks.forEach((b, bi) => {
-      const wrap = h("div", { class: "rp-block" });
-      if (b.title && blocks.length > 1) wrap.append(h("h3", { class: "rp-block-h" }, b.title));
-      if (b.lines?.length) wrap.append(h("ul", { class: "rp-comment" }, b.lines.map((l) => h("li", {}, l))));
-      if (bi === 0 && s.kpi) wrap.append(pdfTable(s.kpi.columns, s.kpi.rows, "rp-kpis"));
-      const figWrap = h("div", { class: "rp-figs" });
-      for (const f of b.figs || []) {
-        const el = h("div", { class: "rp-chart" });
-        figWrap.append(h("figure", { class: `rp-fig${f.half ? " half" : ""}` },
-          h("figcaption", {}, f.title), f.note ? h("p", { class: "rp-note" }, f.note) : null, f.legend ? legendHTML(f.legend) : null, el));
-        draws.push(() => f.draw(el));
-      }
-      if (figWrap.childElementCount) wrap.append(figWrap);
-      for (const t of b.tables || []) wrap.append(h("div", { class: "rp-table-block" }, h("h4", {}, t.title), pdfTable(t.columns, t.rows)));
-      sec.append(wrap);
-    });
-    if (!blocks.some((b) => b.lines?.length || b.figs?.length || b.tables?.length) && !s.kpi) sec.append(h("p", { class: "rp-note" }, "No data published for this selection."));
-    paper.append(sec);
-  });
+      h("dt", {}, "Analytics"), h("dd", {}, ANALYTICS.filter(([k]) => R.an.has(k)).map(([, l]) => l).join(", ") || "None"),
+      h("dt", {}, "Data refreshed"), h("dd", {}, ctx.meta.generated_at.slice(0, 10)),
+      h("dt", {}, "Generated"), h("dd", {}, generated)),
+    legendHTML(legendOf(R))), tocList);
+  toc.src.textContent = "Sources: Eurostat, ECB Data Portal, OECD, Open-Meteo, INE, Statistics Portugal. CAGR = compound annual growth rate; pp = percentage points; (x) = negative.";
+  add(toc, null);
+
+  const appendix = [];
+  for (const s of doc.sections) {
+    const sl = add(slideShell(s.title.replace(/:.*$/, "")), s.key);
+    sl.src.textContent = `Sources: ${SECTION_SOURCES[s.key] || "Eurostat"}${s.table?.notes?.length ? `. Notes: ${s.table.notes.join("; ")}.` : ""}`;
+    if (s.headline) sl.body.append(h("div", { class: "sl-headline" }, s.headline.endsWith(".") ? s.headline : `${s.headline}.`));
+    if (s.scorecard) {
+      sl.body.classList.add("exec");
+      const list = h("ol", { class: "sl-concl" }, (s.items || []).slice(s.headline ? 1 : 0).map((it) => h("li", {}, h("b", {}, it.lead.endsWith(".") ? it.lead : `${it.lead}.`), it.text ? ` ${it.text}` : "")));
+      const first = s.items?.[0];
+      sl.body.append(h("div", { class: "sl-row" },
+        h("div", { class: "sl-text" }, first?.text ? h("p", { class: "sl-lede" }, first.text) : null, list),
+        h("div", { class: "sl-tablewrap" }, h("div", { class: "sl-table-title" }, R.cmp ? "Relative scorecard (shading = rank)" : `Scorecard v ${R.bench?.name || "benchmark"}`), renderSimpleTable(s.table))));
+      continue;
+    }
+    const tableEl = s.table?.groups ? renderCompTable(s.table) : s.table ? renderSimpleTable(s.table) : null;
+    const top = h("div", { class: "sl-row top" },
+      s.bullets?.length ? h("div", { class: "sl-text" }, h("ul", { class: "sl-bullets" }, s.bullets.map((b) => h("li", {}, b)))) : null,
+      tableEl ? h("div", { class: "sl-tablewrap" }, tableEl) : null);
+    if (!s.bullets?.length) top.classList.add("solo");
+    sl.body.append(top);
+    if (s.charts?.length) sl.body.append(h("div", { class: `sl-figs n${s.charts.length}${s.chartsWide ? " wide" : ""}` }, s.charts.map(figure)));
+    for (const t of s.appendix || []) appendix.push({ section: s, t });
+  }
+  // Appendix: year-by-year tables, two per slide.
+  for (let i = 0; i < appendix.length; i += 2) {
+    const pair = appendix.slice(i, i + 2);
+    const sl = add(slideShell(`Appendix – ${listJoin([...new Set(pair.map((x) => x.section.title.replace(/:.*$/, "")))])} data`), "appendix");
+    sl.body.classList.add(pair.length === 2 ? "tables2" : "tables1");
+    sl.body.append(...pair.map((x) => h("div", { class: "sl-tablewrap" }, h("div", { class: "sl-table-title" }, x.t.title), deckTable(x.t.columns, x.t.rows, { highlight: isFinal }))));
+    sl.src.textContent = `Sources: ${listJoin([...new Set(pair.map((x) => SECTION_SOURCES[x.section.key] || "Eurostat"))])}. Final year boxed.`;
+  }
+
+  slides.forEach((s, i) => { s.pg.textContent = i ? String(i + 1) : ""; });
+  const tocEntries = [...doc.sections.map((s) => [s.key, s.title]), ...(appendix.length ? [["appendix", "Appendix: data tables"]] : [])];
+  for (const [key, title] of tocEntries) {
+    const pages = slides.map((x, i) => (x.section === key ? i + 1 : null)).filter(Boolean);
+    if (!pages.length) continue;
+    tocList.append(h("div", { class: "toc-row" }, h("span", { class: "toc-pg" }, pages.length > 1 ? `Pg ${pages[0]} – ${pages.at(-1)}` : `Pg ${pages[0]}`), h("span", {}, title)));
+  }
 
   const printBtn = h("button", { type: "button", class: "rp-go", onclick: () => {
     const prev = document.title; document.title = doc.fileBase; window.print(); setTimeout(() => { document.title = prev; }, 500);
@@ -956,15 +1223,20 @@ function renderDocument(ctx, host, doc, paper, scroll) {
     try { await exportExcel(doc); } catch (e) { console.error(e); alert(`Excel export failed: ${e.message}`); }
     xlBtn.disabled = false; xlBtn.textContent = "Download Excel";
   } }, "Download Excel");
-  host.prepend(h("div", { class: "rp-toolbar" }, printBtn, xlBtn, h("span", { class: "rp-hint" }, "In the print dialog choose “Save as PDF”. Excel holds every table in HG format.")));
+  host.prepend(h("div", { class: "rp-toolbar" }, printBtn, xlBtn,
+    h("span", { class: "rp-hint" }, `${slides.length} slides, 4:3. In the print dialog choose “Save as PDF”; Excel holds every table in HG format.`)));
   scroll.hidden = false;
+  for (const s of slides) for (const el of s.el.querySelectorAll(".sl-text, .sl-tablewrap")) fitText(el, 7);
   draws.forEach((d) => d());
+  requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
 }
 
-function pdfTable(columns, rows, cls = "") {
-  return h("table", { class: `rp-table ${cls}`.trim() },
-    h("thead", {}, h("tr", {}, columns.map((c, i) => h("th", { class: i === 0 ? "text" : null }, c)))),
-    h("tbody", {}, rows.map((r) => h("tr", {}, r.map((v, i) => h("td", { class: i === 0 ? "text" : null }, v ?? ""))))));
+function fitText(el, min) {
+  let fs = parseFloat(getComputedStyle(el).fontSize);
+  while ((el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) && fs > min) {
+    fs -= 0.5;
+    el.style.fontSize = `${fs}px`;
+  }
 }
 
 // ------------------------------------------------------------------ Excel (HG format)

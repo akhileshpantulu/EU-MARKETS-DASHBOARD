@@ -30,6 +30,9 @@ export function disposeAll() {
   instances.clear();
 }
 
+/** A registered chart instance (resized with the window, disposed on navigation). */
+export function initChart(el) { return init(el); }
+
 function init(el) {
   const prev = echarts.getInstanceByDom(el);
   if (prev) { instances.delete(prev); prev.dispose(); }

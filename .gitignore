@@ -12,3 +12,6 @@ dbt_packages/
 data/raw/
 tests/fixtures/raw/
 data/test_site/
+
+# Brand files for the report deck stay local (not published).
+site/assets/brand/
