@@ -66,6 +66,7 @@ jobs:
         run: dbt build --profiles-dir .
 
       - name: Report
+        continue-on-error: true
         run: python -m etl.report
 
       - name: Export site data

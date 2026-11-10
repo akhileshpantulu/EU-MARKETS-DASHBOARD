@@ -21,8 +21,8 @@ def main() -> None:
                coalesce(left(error, 120), '') as error
         from analytics.mart_data_freshness order by source_key""").fetchall()
     counts = con.sql("""
-        select table_schema || '.' || table_name as t, estimated_size as n
-        from duckdb_tables() where table_schema in ('core', 'analytics') order by 1""").fetchall()
+        select schema_name || '.' || table_name as t, estimated_size as n
+        from duckdb_tables() where schema_name in ('core', 'analytics') order by 1""").fetchall()
     lines = ["## Sources", "", "| source | status | dataset | latest period | publisher update | error |",
              "|---|---|---|---|---|---|"]
     lines += [f"| {' | '.join(str(x) if x is not None else '' for x in row)} |" for row in sources]

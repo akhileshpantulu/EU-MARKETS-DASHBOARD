@@ -32,6 +32,7 @@ test: fixtures       ## unit tests + full dbt build on synthetic fixtures (no ne
 	$(PY) -m pytest -q
 	RAW_DIR=$(FIXTURES) DUCKDB_PATH=data/test.duckdb $(PY) -m etl.load_raw
 	DUCKDB_PATH=data/test.duckdb dbt build --profiles-dir .
+	DUCKDB_PATH=data/test.duckdb $(PY) -m etl.report > /dev/null
 	RAW_DIR=$(FIXTURES) DUCKDB_PATH=data/test.duckdb SITE_DATA=data/test_site $(PY) -m etl.export_site
 
 clean:
