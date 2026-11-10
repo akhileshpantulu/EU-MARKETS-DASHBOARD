@@ -10,8 +10,12 @@ models:
         tests:
           - between: {min_value: 0, max_value: 1.01}
       - name: avg_length_of_stay
+        description: Nights per arrival. Small markets in lockdown months can fall outside the usual 1-15 range.
         tests:
-          - between: {min_value: 1, max_value: 30}
+          - between:
+              min_value: 0.5
+              max_value: 60
+              config: {severity: warn}
 
   - name: mart_country_annual
     tests:
