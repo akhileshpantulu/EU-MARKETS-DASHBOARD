@@ -14,17 +14,6 @@ route datasets, the ECB Data Portal, the OECD, Open-Meteo, INE Spain and Statist
 published as a static **GitHub Pages** site. No server: the site is HTML, JavaScript and
 JSON files.
 
-**Live site:** https://akhileshpantulu.github.io/EU-MARKETS-DASHBOARD/ (once GitHub Pages is enabled, see [Deploy](#deploy-to-github-pages))
-
-## What changed from the reference project
-
-| | balearic-tourism-dw | EU Markets Dashboard |
-|---|---|---|
-| Geography | 3 Balearic islands | 27 EU countries, EFTA and candidates, EU totals, ~240 NUTS 2 regions, every reporting airport |
-| Sources | INE EOH/IRSH, IBESTAT, Eurostat `avia_paoa` | Eurostat (tourism, air routes, prices, macro, household demand), ECB, OECD, Open-Meteo, INE Spain, Statistics Portugal, GISCO |
-| Frontend | Streamlit app | Static site on GitHub Pages (ECharts), 14 tabs, light and dark |
-| Refresh | Manual | Daily GitHub Actions run, plus live ECB / Eurostat calls from the browser |
-| Resilience | n/a | Per-source fallbacks; a failed source keeps its last file and the build continues |
 
 ## The dashboard
 
